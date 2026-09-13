@@ -1,0 +1,35 @@
+{
+  "name": "codewhale-cu-plugin",
+  "version": "0.3.1",
+  "description": "Let Codewhale see and operate your apps. Background control, permission setup and human safety controls over MCP.",
+  "license": "MIT",
+  "repository": "github:Hmbown/codewhale-cu-plugin",
+  "homepage": "https://github.com/Hmbown/codewhale-cu-plugin#readme",
+  "bugs": "https://github.com/Hmbown/codewhale-cu-plugin/issues",
+  "type": "module",
+  "private": true,
+  "main": "./mcp/server.mjs",
+  "bin": {
+    "codewhale-cu": "./mcp/server.mjs",
+    "codewhale-cu-app": "./app/daemon.mjs"
+  },
+  "scripts": {
+    "test": "node --test tests/*.test.mjs",
+    "smoke": "node scripts/smoke.mjs",
+    "parity": "node scripts/parity-run.mjs",
+    "parity:matrix": "node scripts/parity-matrix.mjs",
+    "check:receipts": "node scripts/check-receipts.mjs",
+    "app": "node app/daemon.mjs",
+    "build:icons": "node scripts/build-icons.mjs",
+    "build:app": "node scripts/build-app.mjs",
+    "install:app": "node scripts/install-app.mjs",
+    "remove:app": "node scripts/install-app.mjs --remove",
+    "build:branding": "node scripts/render-branding.mjs && node scripts/build-icons.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "devDependencies": {
+    "sharp": "0.35.4"
+  }
+}
