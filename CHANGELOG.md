@@ -1,5 +1,40 @@
 # Release notes
 
+## 0.5.0 — stateful waits and persistent SSH sessions
+
+The workflows that burned observe→wait→observe round-trips on dynamic UI now
+have a first-class wait, and SSH remotes are no longer one-shot-per-call.
+
+- `wait_for` polls the accessibility tree until a `query`/`role` match
+  appears (`state:"present"`, the default) or disappears
+  (`state:"absent"` — dialogs dismissed, spinners finished). Intermediate
+  polls are ephemeral so they cannot evict the states you already hold or be
+  targeted by accident; the satisfying observation is rebound and returned as
+  a fresh `state_id` with its matched elements, ready to act on. Timeouts
+  return an honest `timed_out:true` receipt rather than throwing, and
+  cancellation / stop / computer-switch abort immediately.
+- `type` and `key` accept an element `target` from `get_app_state`: the
+  element is revalidated and accessibility-focused first, then the text or
+  key is sent — the documented focus-then-act idiom in one call. If the
+  element went stale, the call fails closed at `stage:"focus"` and no
+  keystrokes are sent.
+- `recording_start` accepts `app_ref`/`window_id` on macOS to crop the
+  recording to that window's rect at start (it does not follow later moves),
+  picking the display the window lives on.
+- `recording_list` on macOS now returns `.jpg`/`.jpeg` files — screenshots
+  saved by the system default JPEG format were previously invisible.
+- `agent.mjs --serve` runs the SSH remote agent as a persistent session over
+  one connection, so `open_application` bindings and session-owned input
+  survive between calls instead of dying with each request. The server uses
+  it automatically, falls back to one-shot mode for an older pushed agent,
+  and fails closed after a channel restart until the remote app is rebound
+  and re-observed — requests that may have run remotely before a timeout or
+  disconnect are marked `requestDispatched` rather than silently retried.
+
+Source suite at this commit: 258 passed, 0 failed, 15 platform skips
+(`npm test`). This is a source release note; packaging, notarization, and
+publication receipts land in `docs/releases/0.5.0.json` when the build ships.
+
 ## 0.4.0 — AX primitives
 
 The session that tried to send a WeChat message could not press Return, could
