@@ -1,5 +1,6 @@
 #import <Cocoa/Cocoa.h>
 #import <ApplicationServices/ApplicationServices.h>
+#import <dlfcn.h>
 #include <unistd.h>
 #include <signal.h>
 #include <poll.h>
@@ -104,6 +105,154 @@ static void cuWaitForLease(void) {
   } @finally { cuReleaseLease(); }
 }
 
+/**
+ * Window-routed background pointer.
+ *
+ * Process-directed mouse events (CGEventPostToPid) never reach AppKit views,
+ * and posting to the HID tap moves the user's real cursor. The route that
+ * delivers is the WindowServer's event-record channel: a CGEvent carrying the
+ * target window's id (fields 0x33/0x5b/0x5c) plus a window-space location is
+ * posted as its raw event record via SLPSPostEventRecordTo. AppKit only
+ * dispatches mouse events to views while the app is active, so the front
+ * process is briefly leased with kCPSNoWindows-style options (no windows are
+ * raised) and restored in @finally. The real cursor never moves; the lease is
+ * reported honestly as front_lease.
+ */
+typedef OSStatus (*cuGetFrontFn)(ProcessSerialNumber *);
+typedef OSStatus (*cuGetPSNFn)(pid_t, ProcessSerialNumber *);
+typedef OSStatus (*cuSetFrontFn)(ProcessSerialNumber *, uint32_t, uint32_t);
+typedef OSStatus (*cuPostRecordFn)(ProcessSerialNumber *, const void *);
+typedef void (*cuSetWinLocFn)(CGEventRef, CGPoint);
+static BOOL axActivate(pid_t pid);
+static BOOL cuBgResolved = NO;
+static cuGetFrontFn cuGetFront;
+static cuGetPSNFn cuGetPSN;
+static cuSetFrontFn cuSetFront;
+static cuPostRecordFn cuPostRecord;
+static cuSetWinLocFn cuSetWinLoc;
+static BOOL cuResolveBgPointer(void) {
+  if(cuBgResolved) return cuGetFront && cuGetPSN && cuSetFront && cuPostRecord && cuSetWinLoc;
+  cuBgResolved = YES;
+  void *sl = dlopen("/System/Library/PrivateFrameworks/SkyLight.framework/SkyLight", RTLD_LAZY);
+  void *hs = dlopen("/System/Library/Frameworks/ApplicationServices.framework/Frameworks/HIServices.framework/HIServices", RTLD_LAZY);
+  if(sl) {
+    cuGetFront = (cuGetFrontFn)dlsym(sl, "_SLPSGetFrontProcess");
+    cuSetFront = (cuSetFrontFn)dlsym(sl, "SLPSSetFrontProcessWithOptions");
+    cuPostRecord = (cuPostRecordFn)dlsym(sl, "SLPSPostEventRecordTo");
+    cuSetWinLoc = (cuSetWinLocFn)dlsym(sl, "CGEventSetWindowLocation");
+  }
+  if(hs) cuGetPSN = (cuGetPSNFn)dlsym(hs, "GetProcessForPID");
+  return cuGetFront && cuGetPSN && cuSetFront && cuPostRecord && cuSetWinLoc;
+}
+/** Smallest layer-0 window of pid containing p (a sheet beats its parent). */
+static BOOL cuWindowAtPointForPid(pid_t pid, CGPoint p, uint32_t *outWin, CGRect *outFrame) {
+  NSArray *windows = CFBridgingRelease(CGWindowListCopyWindowInfo(kCGWindowListOptionAll, kCGNullWindowID));
+  double bestArea = 0;
+  BOOL found = NO;
+  for(NSDictionary *w in windows) {
+    if([w[(__bridge NSString *)kCGWindowOwnerPID] intValue] != pid) continue;
+    if([w[(__bridge NSString *)kCGWindowLayer] intValue] != 0) continue;
+    NSNumber *alpha = w[(__bridge NSString *)kCGWindowAlpha];
+    if(alpha && [alpha doubleValue] <= 0) continue;
+    CGRect b;
+    if(!CGRectMakeWithDictionaryRepresentation((__bridge CFDictionaryRef)w[(__bridge NSString *)kCGWindowBounds], &b)) continue;
+    if(b.size.width < 1 || b.size.height < 1 || !CGRectContainsPoint(b, p)) continue;
+    double area = b.size.width * b.size.height;
+    if(!found || area < bestArea) {
+      found = YES; bestArea = area;
+      *outWin = [w[(__bridge NSString *)kCGWindowNumber] unsignedIntValue];
+      *outFrame = b;
+    }
+  }
+  return found;
+}
+static NSDictionary *cuBgPointer(NSRunningApplication *inputApp, NSDictionary *args) {
+  if(!cuResolveBgPointer())
+    @throw [NSException exceptionWithName:@"bg_dispatch_unavailable" reason:@"window-routed background pointer is unavailable: SLPSPostEventRecordTo/CGEventSetWindowLocation not resolvable via SkyLight; no input was sent" userInfo:nil];
+  NSArray *steps = args[@"steps"];
+  if(![steps isKindOfClass:NSArray.class] || !steps.count || steps.count > 400)
+    @throw [NSException exceptionWithName:@"args" reason:@"bg_pointer needs 1..400 steps" userInfo:nil];
+  CGPoint anchor = CGPointZero;
+  BOOL haveAnchor = NO;
+  for(NSDictionary *step in steps) {
+    // A scroll step carries its point alongside the deltas.
+    if([step[@"x"] isKindOfClass:NSNumber.class] && [step[@"y"] isKindOfClass:NSNumber.class]) {
+      anchor = CGPointMake([step[@"x"] doubleValue], [step[@"y"] doubleValue]);
+      haveAnchor = YES; break;
+    }
+  }
+  if(!haveAnchor) @throw [NSException exceptionWithName:@"args" reason:@"bg_pointer steps carry no point" userInfo:nil];
+  uint32_t winNum = 0;
+  CGRect frame = CGRectZero;
+  if(!cuWindowAtPointForPid(inputApp.processIdentifier, anchor, &winNum, &frame))
+    @throw [NSException exceptionWithName:@"window" reason:@"no window of the bound application covers the start point; no input was sent" userInfo:nil];
+  ProcessSerialNumber frontPSN, targetPSN;
+  NSRunningApplication *frontApp = NSWorkspace.sharedWorkspace.frontmostApplication;
+  if(cuGetFront(&frontPSN) != 0 || cuGetPSN(inputApp.processIdentifier, &targetPSN) != 0)
+    @throw [NSException exceptionWithName:@"bg_dispatch_unavailable" reason:@"could not resolve process serial numbers for a window-routed gesture; no input was sent" userInfo:nil];
+  cuCheckCancelled();
+  BOOL swapped = cuSetFront(&targetPSN, 0, 0x400) == 0;
+  if(!swapped)
+    @throw [NSException exceptionWithName:@"bg_dispatch_unavailable" reason:@"the window server refused the background focus lease; no input was sent" userInfo:nil];
+  @try {
+    uint8_t rec[0xf8];
+    memset(rec, 0, sizeof(rec));
+    rec[0x24] = 0xf8; rec[0x28] = 0x0d;
+    rec[0x5c] = (winNum >> 24) & 0xff; rec[0x5d] = (winNum >> 16) & 0xff;
+    rec[0x5e] = (winNum >> 8) & 0xff;  rec[0x5f] = winNum & 0xff;
+    rec[0xaa] = 0x01;
+    cuPostRecord(&targetPSN, rec);
+    usleep(30000);
+    for(NSDictionary *step in steps) {
+      cuCheckCancelled();
+      if([step[@"scroll"] isKindOfClass:NSArray.class]) {
+        NSArray *d = step[@"scroll"];
+        CGEventRef wheel = CGEventCreateScrollWheelEvent(NULL, kCGScrollEventUnitLine, 2, [d[1] intValue], [d[0] intValue]);
+        CGEventSetIntegerValueField(wheel, 0, 3);
+        CGEventSetIntegerValueField(wheel, 7, 3);
+        CGEventSetIntegerValueField(wheel, 0x28, inputApp.processIdentifier);
+        CGEventSetIntegerValueField(wheel, 0x33, winNum);
+        CGEventSetIntegerValueField(wheel, 0x5b, winNum);
+        CGEventSetIntegerValueField(wheel, 0x5c, winNum);
+        cuSetWinLoc(wheel, CGPointMake(anchor.x - frame.origin.x, anchor.y - frame.origin.y));
+        void *record = *(void **)((char *)wheel + 0x18);
+        if(record) cuPostRecord(&targetPSN, record); else CGEventPostToPid(inputApp.processIdentifier, wheel);
+        CFRelease(wheel);
+      } else {
+        CGPoint p = CGPointMake([step[@"x"] doubleValue], [step[@"y"] doubleValue]);
+        int type = [step[@"type"] intValue], button = [step[@"button"] intValue];
+        CGEventRef e = CGEventCreateMouseEvent(NULL, (CGEventType)type, p, (CGMouseButton)button);
+        CGEventSetIntegerValueField(e, kCGMouseEventClickState, [step[@"clickState"] longLongValue]);
+        BOOL pressed = type == kCGEventLeftMouseDown || type == kCGEventRightMouseDown || type == kCGEventOtherMouseDown
+                    || type == kCGEventLeftMouseDragged || type == kCGEventRightMouseDragged || type == kCGEventOtherMouseDragged;
+        CGEventSetDoubleValueField(e, 2, pressed ? 1.0 : 0.0);
+        CGEventSetIntegerValueField(e, 0, 3);
+        CGEventSetIntegerValueField(e, 7, 3);
+        CGEventSetIntegerValueField(e, 0x28, inputApp.processIdentifier);
+        CGEventSetIntegerValueField(e, 0x33, winNum);
+        CGEventSetIntegerValueField(e, 0x5b, winNum);
+        CGEventSetIntegerValueField(e, 0x5c, winNum);
+        cuSetWinLoc(e, CGPointMake(p.x - frame.origin.x, p.y - frame.origin.y));
+        void *record = *(void **)((char *)e + 0x18);
+        if(record) cuPostRecord(&targetPSN, record); else CGEventPostToPid(inputApp.processIdentifier, e);
+        CFRelease(e);
+      }
+      usleep((useconds_t)([step[@"delayMs"] intValue] ?: 20) * 1000);
+    }
+  } @finally {
+    cuSetFront(&frontPSN, 0, 0x400);
+    // The record channel does not refresh NSWorkspace's view of the front app
+    // promptly; if the lease is still visible after a beat, re-assert the
+    // previous app through the Accessibility grant.
+    for(int i = 0; i < 10; i++) {
+      usleep(50000);
+      if(NSWorkspace.sharedWorkspace.frontmostApplication.processIdentifier != inputApp.processIdentifier) break;
+      axActivate(frontApp.processIdentifier);
+    }
+  }
+  return @{@"action_sent":@YES, @"strategy":@"window-record", @"pointer_moved":@NO,
+           @"front_lease":@YES, @"window":@{@"id":@(winNum)}};
+}
 static id attr(AXUIElementRef el, NSString *name) {
 #ifdef CU_TEST
   // The observation fixture exercises the real walker without reading a GUI.
@@ -537,7 +686,7 @@ static id execute(NSDictionary *p) {
   if([tool isEqual:@"pointer_sequence"] && ![args[@"foreground_input"] boolValue] && ![args[@"app_scoped"] boolValue])
     @throw [NSException exceptionWithName:@"shared_pointer_required" reason:@"shared macOS pointer input is unavailable in background mode; use an accessibility action, strategy 'app' for a click inside the bound window, or a separate computer" userInfo:nil];
   cuOwnerPipe=[args[@"owner_pipe"] boolValue];
-  BOOL mutates=[@[@"type",@"key_event",@"mouse_event",@"scroll",@"pointer_sequence",@"release_input",@"set_value",@"focus_element",@"select_text",@"perform_action",@"click_element",@"scroll_element"] containsObject:tool]
+  BOOL mutates=[@[@"type",@"key_event",@"mouse_event",@"scroll",@"pointer_sequence",@"bg_pointer",@"release_input",@"set_value",@"focus_element",@"select_text",@"perform_action",@"click_element",@"scroll_element"] containsObject:tool]
     || ([tool isEqual:@"hit_test"] && [args[@"perform"] boolValue])
     || ([tool isEqual:@"app_info"] && [args[@"activate"] boolValue]);
   if([tool isEqual:@"release_input"]) {
@@ -558,7 +707,7 @@ static id execute(NSDictionary *p) {
     return cuPostKey(args,[args[@"input_app_ref"][@"pid"] intValue]);
   }
   cuCheckCancelled();
-  if([tool isEqual:@"input_capabilities"]) return @{@"input_lease":@1,@"owner_pipe":@YES,@"record_owner_pipe":@1,@"window_ocr":@1,@"element_identity":@1,@"background_actions":@1};
+  if([tool isEqual:@"input_capabilities"]) return @{@"input_lease":@1,@"owner_pipe":@YES,@"record_owner_pipe":@1,@"window_ocr":@1,@"element_identity":@1,@"background_actions":@1,@"window_record":@(cuResolveBgPointer()?1:0)};
   if([tool isEqual:@"record"]) return cuRecord(args);
   if([tool isEqual:@"recognize_text"]) return cuRecognizeText(args[@"file"]);
 #ifdef CU_TEST
@@ -658,7 +807,7 @@ static id execute(NSDictionary *p) {
     return @{@"found":@YES,@"name":a.localizedName?:@"",@"pid":@(a.processIdentifier),@"bundle_id":a.bundleIdentifier?:@"",@"frontmost":@(a.active)};
   }
   NSRunningApplication *inputApp=nil;
-  if([@[@"type",@"key_event",@"mouse_event",@"scroll",@"hit_test",@"pointer_sequence"] containsObject:tool]) {
+  if([@[@"type",@"key_event",@"mouse_event",@"scroll",@"hit_test",@"pointer_sequence",@"bg_pointer"] containsObject:tool]) {
     if(![args[@"input_app_ref"] isKindOfClass:NSDictionary.class]) @throw [NSException exceptionWithName:@"focus" reason:@"open_application first to bind the input destination" userInfo:nil];
     inputApp=resolve(args[@"input_app_ref"]);
     if(!inputApp || inputApp.terminated) @throw [NSException exceptionWithName:@"focus" reason:@"input application is no longer running; open_application again" userInfo:nil];
@@ -776,6 +925,7 @@ static id execute(NSDictionary *p) {
    * runs in one call and restores its starting position when requested.
    * Restoration does not make concurrent desktop use safe.
    */
+  if([tool isEqual:@"bg_pointer"]) return cuBgPointer(inputApp, args);
   if([tool isEqual:@"pointer_sequence"]) {
     CGEventRef probe=CGEventCreate(NULL); CGPoint home=CGEventGetLocation(probe); CFRelease(probe);
     // Shared input is allowed only while the explicitly selected app remains

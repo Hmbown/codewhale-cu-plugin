@@ -158,6 +158,10 @@ export function create({ exec }) {
     // actions, not just raw pointer events.
     const t = args?.target;
     if (t && Number.isFinite(t.x) && Number.isFinite(t.y)) state.pointer = { x: t.x, y: t.y };
+    if (tool === "bg_pointer") {
+      const last = [...(args.steps ?? [])].reverse().find((s) => Number.isFinite(s?.x) && Number.isFinite(s?.y));
+      if (last) state.pointer = { x: last.x, y: last.y };
+    }
     if (tool === "pointer_sequence" && !args.app_scoped) requireSharedPointer();
     const helper = await nativeHelper();
     const r = await runL(helper, [JSON.stringify({ tool, args: { ...args, input_app_ref: state.inputApp, foreground_input: state.foregroundInput, owner_pipe: true } })], { timeoutMs: 20_000, ownerPipe: true });
@@ -166,13 +170,13 @@ export function create({ exec }) {
       if (r.aborted) error.code = "cancelled";
       // A deterministic native refusal sent no input. A killed/timed-out
       // helper may have posted the press before losing its response.
-      const postsPress = (tool === "key_event" && args.down) || ["type", "perform_action", "click_element", "scroll_element", "set_value", "focus_element", "select_text"].includes(tool) || (tool === "hit_test" && args.perform) || (tool === "pointer_sequence" && args.steps?.some((step) => [1, 3, 25].includes(step.type)));
+      const postsPress = (tool === "key_event" && args.down) || ["type", "perform_action", "click_element", "scroll_element", "set_value", "focus_element", "select_text", "bg_pointer"].includes(tool) || (tool === "hit_test" && args.perform) || (tool === "pointer_sequence" && args.steps?.some((step) => [1, 3, 25].includes(step.type)));
       error.inputMayHaveBeenSent = postsPress && r.spawned === true && (r.aborted || r.timedOut);
       if (error.inputMayHaveBeenSent) error.message += "; input may already have been sent — observe the target before doing anything else";
       throw error;
     }
     const result = tryJson(r.stdout, null);
-    if (state.previewEnabled && state.inputApp && ["type", "key_event", "pointer_sequence", "set_value", "select_text", "perform_action", "hit_test", "click_element", "scroll_element", "focus_element"].includes(tool)) {
+    if (state.previewEnabled && state.inputApp && ["type", "key_event", "pointer_sequence", "bg_pointer", "set_value", "select_text", "perform_action", "hit_test", "click_element", "scroll_element", "focus_element"].includes(tool)) {
       try { await updatePreview(); } catch (error) { result.preview_error = error.message; }
     }
     return result;
@@ -299,6 +303,19 @@ export function create({ exec }) {
       throw new ExecError(`strategy "a11y" is only available for a left single click on this backend; ${mouseName(button)} x${clicks} has no accessibility equivalent`);
     }
     if (strategy === "app" || (strategy === "auto" && !state.foregroundInput)) {
+      // Window-routed record delivery: AppKit accepts the events as genuine
+      // input, the cursor never moves. A momentary no-raise front lease is
+      // taken and restored inside the helper; it is reported, not hidden.
+      if ((await native("input_capabilities"))?.window_record === 1) {
+        // Ownership is enforced by window containment inside the helper: the
+        // events are addressed to a window id of the bound app, so a covered
+        // background window is still safe — they cannot land on the coverer.
+        const r = await native("bg_pointer", { steps: clickSteps(button, x, y, clicks) });
+        return { action_sent: true, strategy: "window-record", input_scope: "application-window",
+                 at: { x, y }, button, clicks, pointer_moved: false, front_lease: r.front_lease ?? true,
+                 window: r.window ?? null,
+                 ...(a11yReason ? { a11y_reason: a11yReason } : {}) };
+      }
       if (strategy !== "app") {
         // auto in background still fails closed for raw pointer; app is the
         // explicit missing middle.
@@ -790,6 +807,11 @@ export function create({ exec }) {
         steps.push({ type: MOUSE.left.dragged, x: from.x + ((to.x - from.x) * i) / n, y: from.y + ((to.y - from.y) * i) / n, button: 0, clickState: 1, delayMs: 45 });
       }
       steps.push({ type: MOUSE.left.up, x: to.x, y: to.y, button: 0, clickState: 1, delayMs: 80 });
+      if (!state.foregroundInput && (await native("input_capabilities"))?.window_record === 1) {
+        const r = await native("bg_pointer", { steps });
+        return { action_sent: true, strategy: "window-record", input_scope: "application-window",
+                 from, to, pointer_moved: false, front_lease: r.front_lease ?? true, window: r.window ?? null };
+      }
       const r = await gesture(steps, { restore: true, guard: from });
       return { action_sent: true, strategy: "event", from, to, ...pointerCost(r) };
     },
@@ -803,8 +825,21 @@ export function create({ exec }) {
         }
         const receipt = await native("hit_test", { x: target.x, y: target.y, perform: true, direction, amount,
           operation: ["left", "right"].includes(direction) ? "scroll-horizontal" : "scroll-vertical" });
-        if (!receipt?.action_sent) throw Object.assign(new ExecError(`No background scrollbar at this point (${receipt?.reason ?? "not_found"}); choose an observed scroll area or a separate computer.`), { code: "background_scroll_unavailable" });
-        return receipt;
+        if (receipt?.action_sent) return receipt;
+        // No AX scrollbar here (overlay scrollers, web pages): wheel events
+        // still reach the view through the window-record route.
+        if ((await native("input_capabilities"))?.window_record === 1) {
+          const dx = direction === "left" ? amount : direction === "right" ? -amount : 0;
+          const dy = direction === "up" ? amount : direction === "down" ? -amount : 0;
+          const notches = Math.max(1, Math.min(100, Math.round(amount)));
+          const steps = [];
+          for (let i = 0; i < notches; i++) steps.push({ scroll: [Math.sign(dx), Math.sign(dy)], x: target.x, y: target.y, delayMs: 15 });
+          const r = await native("bg_pointer", { steps });
+          return { action_sent: true, strategy: "window-record", input_scope: "application-window",
+                   direction, amount, pointer_moved: false, front_lease: r.front_lease ?? true, window: r.window ?? null,
+                   verified: false, verification_required: "observation" };
+        }
+        throw Object.assign(new ExecError(`No background scrollbar at this point (${receipt?.reason ?? "not_found"}); choose an observed scroll area or a separate computer.`), { code: "background_scroll_unavailable" });
       }
       const dx = direction === "left" ? -amount : direction === "right" ? amount : 0;
       const dy = direction === "up" ? amount : direction === "down" ? -amount : 0;

@@ -206,7 +206,7 @@ export const TOOLS = [
   },
   // ---- pointer ----
   {
-    name: "left_click", description: "Left-click a coordinate (pixels in the latest raster) or perform the element's press action.",
+    name: "left_click", description: "Left-click a coordinate (pixels in the latest raster) or perform the element's press action. macOS background mode presses via accessibility first; a point with no pressable element is delivered through the window-record route (genuine mouse events, cursor untouched, momentary no-raise front lease reported as front_lease).",
     inputSchema: { type: "object", required: ["target"], properties: { target: targetSchema, strategy: strategyParam, computer: computerParam }, additionalProperties: false },
   },
   {
@@ -230,7 +230,7 @@ export const TOOLS = [
     inputSchema: { type: "object", required: ["target"], properties: { target: targetSchema, computer: computerParam }, additionalProperties: false },
   },
   {
-    name: "left_click_drag", description: "Press at from_target, move in steps, release at `to`.",
+    name: "left_click_drag", description: "Press at from_target, move in steps, release at `to`. macOS background mode delivers the gesture through the window-record route (strategy \"window-record\"): AppKit receives genuine mouse events, the real cursor never moves, and a momentary no-raise front lease is taken and restored (reported as front_lease).",
     inputSchema: { type: "object", required: ["from_target", "to"], properties: { from_target: targetSchema, to: targetSchema, computer: computerParam }, additionalProperties: false },
   },
   {
@@ -242,7 +242,7 @@ export const TOOLS = [
     inputSchema: { type: "object", properties: { computer: computerParam }, additionalProperties: false },
   },
   {
-    name: "scroll", description: "Scroll up/down/left/right at a target. macOS background mode uses the target's accessibility scrollbar without moving the cursor; amount counts native increments or 5% normalized steps, named in the receipt. Other raw routes use lines/notches. Prefer an observed scroll-area element.",
+    name: "scroll", description: "Scroll up/down/left/right at a target. macOS background mode uses the target's accessibility scrollbar without moving the cursor; amount counts native increments or 5% normalized steps, named in the receipt. Where no AX scrollbar exists (overlay scrollers, web pages) wheel events are delivered through the window-record route (strategy \"window-record\", a momentary no-raise front lease, cursor untouched). Other raw routes use lines/notches. Prefer an observed scroll-area element.",
     inputSchema: { type: "object", required: ["target"], properties: { target: targetSchema, direction: { enum: ["up", "down", "left", "right"] }, amount: { type: "integer", minimum: 1, maximum: 100 }, computer: computerParam }, additionalProperties: false },
   },
   // ---- text & keyboard ----
