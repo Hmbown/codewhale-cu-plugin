@@ -166,9 +166,10 @@ Observe once, act once, then verify.
     Acting on one fails `degenerate_frame` — scroll the real row into view
     and re-observe rather than retrying the same index.
   - `set_value` coerces numbers for `AXIncrementor`/`AXSlider`/`AXStepper`
-    and verifies the readback. Web-area elements refuse the `AXValue` write
-    entirely (it silently no-ops or clears web numeric controls) — `focus`
-    the element then `type` the value instead.
+    and verifies the readback. Web-area elements take the replacement path
+    automatically (focus, select-all through the record channel, type,
+    read-back verify — receipt `strategy:"focus-type-replace"`) because
+    Chromium silently no-ops or coerces direct `AXValue` writes.
   Use app-scoped screenshots (`app_ref`) to avoid capturing unrelated windows.
   The nonactivating preview panel is on by default while an app is bound —
   it shows the captured app window and a drawn cursor at each action's target

@@ -873,7 +873,31 @@ export function create({ exec }) {
       await withPressedKey(code, flags, () => wait(d * 1000));
       return { action_sent: true, key, keyboard_delivery: state.foregroundInput ? "foreground-guarded" : "process", heldSec: d };
     },
-    set_value: (args) => native("set_value", args),
+    set_value: async (args) => {
+      try {
+        return await native("set_value", args);
+      } catch (error) {
+        // Web text controls ignore AXValue writes, so the native side refuses
+        // before dispatch. The replacement path is focus + select-all + type
+        // with a read-back verify — the same shape kimi-cu uses, with the
+        // value proven rather than asserted.
+        if (!/web area/i.test(error.message)) throw error;
+        if (args.target?.type !== "element") throw error;
+        const value = String(args.value ?? "");
+        await native("focus_element", { target: args.target });
+        // cmd+a through the record channel: menu key equivalents only
+        // validate against a key window, which the lease provides.
+        await native("bg_key", { code: 0, flags: 1 << 20, down: true });
+        await native("bg_key", { code: 0, flags: 1 << 20, down: false });
+        await new Promise((r) => setTimeout(r, 60));
+        await native("type", { text: value });
+        const back = await native("get_value", { target: args.target });
+        const verified = back?.value === value;
+        return { action_sent: true, strategy: "focus-type-replace", role: back?.role ?? null,
+                 after: back?.value ?? null, verified,
+                 ...(verified ? {} : { note: "replacement did not verify against the control's own value; observe before relying on it" }) };
+      }
+    },
     focus: (args) => native("focus_element", args),
     get_value: (args) => native("get_value", args),
     select_text: (args) => native("select_text", args),

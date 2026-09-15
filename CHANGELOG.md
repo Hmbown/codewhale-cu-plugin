@@ -38,6 +38,13 @@
     WindowServer front-process channel (options 0x200) with the AXFrontmost
     fallback, and the confirmation wait pumps the run loop — a one-shot
     helper otherwise reads a stale NSWorkspace answer for seconds.
+  - **`set_value` covers web text fields.** Direct `AXValue` writes are
+    still refused (Chromium ignores or coerces them), but the backend now
+    answers with the replacement path instead of an instruction: focus,
+    select-all through the window-record channel (menu key equivalents need
+    a key window — new `bg_key` primitive), type, read-back verify.
+    Receipts say `strategy:"focus-type-replace"` with `verified` from the
+    control's own value — the last capability kimi-cu held over us.
   - **Observation rides out Chromium's a11y rebuilds.** Windows that vend
     zero content are rebuilt-tree states, not empty pages: unfiltered
     observes poll up to 2.4 s (longer while a menu lease is held) before

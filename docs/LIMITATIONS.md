@@ -30,9 +30,13 @@ Two honesty fixes on the action path:
   `NSNumber` (parsed with a POSIX `NSNumberFormatter`); a non-numeric string
   fails before dispatch with a focus-then-type instruction, and the result
   is read back so the receipt reports `verified` rather than asserting the
-  write. Elements under `AXWebArea` refuse the write entirely — Chromium
-  accepts `AXValue` sets and then ignores them or coerces the field empty —
-  with an instruction to `focus` the element and `type` instead.
+  write. Elements under `AXWebArea` still refuse direct `AXValue` writes —
+  Chromium accepts them and then ignores them or coerces the field empty —
+  but the backend now answers with the replacement path instead of an
+  instruction: focus the element, select-all through the window-record
+  channel (menu key equivalents need a key window), type, and read the
+  value back (`strategy:"focus-type-replace"`, `verified` from the control's
+  own value).
 - **Web-area typing uses real key events.** `type` skips the
   `AXSelectedText` path for elements under `AXWebArea` (Chromium accepts the
   write and drops it) and sends process-bound unicode events after the

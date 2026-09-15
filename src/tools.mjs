@@ -259,7 +259,7 @@ export const TOOLS = [
     inputSchema: { type: "object", required: ["text", "duration"], properties: { text: { type: "string" }, duration: { type: "number", minimum: 0.05, maximum: 30 }, computer: computerParam }, additionalProperties: false },
   },
   {
-    name: "set_value", description: "Set an editable element's value through the accessibility layer (background-safe, no keystrokes). Element targets only.",
+    name: "set_value", description: "Set an editable element's value. Native controls take a background-safe AXValue write with read-back verify; web-area elements take the replacement path (focus, select-all through the window-record channel, type, read-back verify) because Chromium silently no-ops direct AXValue writes. Element targets only.",
     inputSchema: { type: "object", required: ["target", "value"], properties: { target: targetSchema, value: { type: "string" }, computer: computerParam }, additionalProperties: false },
   },
   {

@@ -909,7 +909,7 @@ static id execute(NSDictionary *p) {
   if([tool isEqual:@"pointer_sequence"] && ![args[@"foreground_input"] boolValue] && ![args[@"app_scoped"] boolValue])
     @throw [NSException exceptionWithName:@"shared_pointer_required" reason:@"shared macOS pointer input is unavailable in background mode; use an accessibility action, strategy 'app' for a click inside the bound window, or a separate computer" userInfo:nil];
   cuOwnerPipe=[args[@"owner_pipe"] boolValue];
-  BOOL mutates=[@[@"type",@"key_event",@"mouse_event",@"scroll",@"pointer_sequence",@"bg_pointer",@"release_input",@"set_value",@"focus_element",@"select_text",@"perform_action",@"click_element",@"scroll_element"] containsObject:tool]
+  BOOL mutates=[@[@"type",@"key_event",@"bg_key",@"mouse_event",@"scroll",@"pointer_sequence",@"bg_pointer",@"release_input",@"set_value",@"focus_element",@"select_text",@"perform_action",@"click_element",@"scroll_element"] containsObject:tool]
     || ([tool isEqual:@"hit_test"] && [args[@"perform"] boolValue])
     || ([tool isEqual:@"app_info"] && [args[@"activate"] boolValue]);
   if([tool isEqual:@"release_input"]) {
@@ -1041,7 +1041,7 @@ static id execute(NSDictionary *p) {
     return @{@"found":@YES,@"name":a.localizedName?:@"",@"pid":@(a.processIdentifier),@"bundle_id":a.bundleIdentifier?:@"",@"frontmost":@(a.active)};
   }
   NSRunningApplication *inputApp=nil;
-  if([@[@"type",@"key_event",@"mouse_event",@"scroll",@"hit_test",@"pointer_sequence",@"bg_pointer"] containsObject:tool]) {
+  if([@[@"type",@"key_event",@"bg_key",@"mouse_event",@"scroll",@"hit_test",@"pointer_sequence",@"bg_pointer"] containsObject:tool]) {
     if(![args[@"input_app_ref"] isKindOfClass:NSDictionary.class]) @throw [NSException exceptionWithName:@"focus" reason:@"open_application first to bind the input destination" userInfo:nil];
     inputApp=resolve(args[@"input_app_ref"]);
     if(!inputApp || inputApp.terminated) @throw [NSException exceptionWithName:@"focus" reason:@"input application is no longer running; open_application again" userInfo:nil];
@@ -1049,7 +1049,7 @@ static id execute(NSDictionary *p) {
   }
   // A held menu lease is given back before fresh raw input or an explicit
   // activation; AX element actions (the pick itself) leave it alone.
-  if([@[@"bg_pointer",@"type",@"key_event",@"pointer_sequence"] containsObject:tool]
+  if([@[@"bg_pointer",@"type",@"key_event",@"bg_key",@"pointer_sequence"] containsObject:tool]
      || ([tool isEqual:@"app_info"] && [args[@"activate"] boolValue]))
     cuFrontLeaseRestoreIfHeld();
   if(mutates) { cuCheckCancelled(); cuLockInput(); }
@@ -1061,6 +1061,42 @@ static id execute(NSDictionary *p) {
     id result=cuPostKey(args,inputApp.processIdentifier);
     if([args[@"input_lease"] boolValue] && [args[@"down"] boolValue]) { cuLeaseKey=args; cuLeasePid=inputApp.processIdentifier; cuLeaseApp=inputApp; }
     return result;
+  }
+  // A key chord with modifier flags through the window-record channel: menu
+  // key equivalents (cmd+a, cmd+shift+g) only validate against a key window,
+  // which the lease provides. Used by background select-all/replace flows.
+  if([tool isEqual:@"bg_key"]) {
+    if(!cuResolveBgPointer())
+      @throw [NSException exceptionWithName:@"bg_dispatch_unavailable" reason:@"window-routed background keys are unavailable; no input was sent" userInfo:nil];
+    uint32_t keyWin = 0;
+    CGRect keyFrame = CGRectZero;
+    id focused = cuFocusedElement(inputApp.processIdentifier);
+    id node = focused;
+    for(int depth = 0; node && depth < 64; depth++) {
+      if([attr((__bridge AXUIElementRef)node, @"AXRole") isEqual:@"AXWindow"]) {
+        cuFrame((__bridge AXUIElementRef)node, &keyFrame)
+          && cuWindowNumberForFrame(inputApp.processIdentifier, keyFrame, &keyWin);
+        break;
+      }
+      id parent = attr((__bridge AXUIElementRef)node, @"AXParent");
+      if(!parent || CFEqual((__bridge CFTypeRef)parent, (__bridge CFTypeRef)node)) break;
+      node = parent;
+    }
+    if(!keyWin) @throw [NSException exceptionWithName:@"focus" reason:@"no focused window for a window-routed key; focus a control first" userInfo:nil];
+    cuBgLease lease;
+    NSString *why = nil;
+    if(!cuBgLeaseBegin(inputApp, keyWin, YES, &lease, &why))
+      @throw [NSException exceptionWithName:@"bg_dispatch_unavailable" reason:why userInfo:nil];
+    @try {
+      for(int down = 1; down >= 0; down--) {
+        CGEventRef event = CGEventCreateKeyboardEvent(NULL, [args[@"code"] unsignedShortValue], down ? true : false);
+        CGEventSetFlags(event, [args[@"flags"] unsignedLongLongValue]);
+        cuPostEventRecord(&lease, event, keyWin, CGPointMake(CGRectGetMidX(keyFrame) - keyFrame.origin.x, CGRectGetMidY(keyFrame) - keyFrame.origin.y));
+        CFRelease(event);
+        usleep(30000);
+      }
+    } @finally { cuBgLeaseEnd(&lease); }
+    return @{@"action_sent":@YES, @"strategy":@"window-record", @"keyboard_delivery":@"window-record", @"front_lease":@YES};
   }
   if([tool isEqual:@"mouse_event"]) {
     CGPoint p=CGPointMake([args[@"x"] doubleValue],[args[@"y"] doubleValue]);
