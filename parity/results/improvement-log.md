@@ -152,3 +152,76 @@ Reference: kimi-cu v0.5.4 (`/Applications/KimiCU.app`, plugin dir
   the held lease keeps it observable, `AXPick` on "green" sets the value.
   Verified live end-to-end: color=green in the page oracle, frontmost
   restored to Terminal, cursor untouched.
+
+## Morning report (2026-09-15)
+
+**Parity score: 19/28 → 28/28 demonstrated.** All 28 tasks × 5 reps green
+(140/140) in run `darwin-aqua-2026-09-15T15-15-48-792Z`, drift 0px on every
+rep, foreground preserved per the independent observer. `npm test` 260/0/15
+throughout. Work committed to `main` locally (nothing pushed), installed app
+rebuilt + restarted, plugin dir rsynced.
+
+### Rounds completed
+
+1. **Runner focus theft** — fixture launches stole the operator's typing
+   focus; the runner now hands it back after each launch (probe-verified).
+2. **Window-routed background pointer (the crown jewel).** Reverse-engineered
+   kimi-cu's binary (Swift `SkyLight`/`BackgroundInput`/`SignedKeyboard`
+   enums) and replicated the delivery channel: window-id addressed CGEvents
+   (`0x33`/`0x5b`/`0x5c`), `CGEventSetWindowLocation`, posted as raw event
+   records via `SLPSPostEventRecordTo`. Found the real gate by experiment:
+   view-level delivery needs the window **key** — the focus record makes it
+   only *main* (events arrive, get swallowed) — so a momentary NoWindows
+   front-process lease is taken and restored. Clicks, drags, right/middle/
+   double/triple click and wheel now work in background; the real cursor
+   never moves; receipts say `front_lease:true`.
+3. **Menus.** Web `<select>` popups need a real click (AXPress does nothing);
+   menus die when the lease ends, so menu-opening clicks hold it across
+   calls (15 s watchdog, never yanked from the user). Observes poll through
+   Chromium's post-activation AX rebuild. `<select>` open→observe→AXPick
+   verified end-to-end.
+4. **Astral typing.** Occluded windows lose surrogate-pair graphemes via
+   process-posted keys (measured); multi-unit graphemes route through the
+   record channel instead. Emoji/flags/CJK verified into a fully occluded
+   Chrome field.
+5. **Pixel wheel.** Chromium ignores line-unit scroll events (measured);
+   one notch = 40 px.
+6. **Activation.** `activate:true` via the SLS front-process channel
+   (0x200); confirmation waits pump the run loop (one-shot NSWorkspace is
+   stale for seconds otherwise).
+7. **Suite fixes.** stale_element oracle now asserts the stale click
+   delivers nothing; upload task accepts the go-to path with Return (macOS
+   26 breadcrumb panel has no AXRow ancestor); the runner re-observes with
+   a server-side query when the 16 KB page budget hides a target (the
+   "empty 59-element tree" was the budget halving 474→59, not a rebuild).
+
+### Where we now beat kimi-cu
+
+- **Background drag works; theirs doesn't.** kimi-cu's `drag` delivered zero
+  events to the AppKit fixture canvas on this machine (`ok:true` anyway);
+  ours delivers and verifies (down/12 dragged/up, drop zone reached).
+- **Their `bg-click` CLI is a no-op here** ("ok" with nothing delivered);
+  our record route lands.
+- **Occluded-window emoji:** they offer an opt-in visible raise; we deliver
+  invisibly through the record channel.
+- **Focus restore:** their front restore left the fixture frontmost in
+  testing; ours restores the previous app (SLS + AX re-assertion).
+- Surface was already a superset: wait_for, find_elements, clipboard,
+  recording, remote computers, batching, preview panel — all kept green.
+
+### Where we still don't
+
+- Their `set_value` does background clear+write on Electron/Web text fields;
+  we still refuse web `set_value` honestly (focus+type instead). Closing
+  this means replicating their clear-then-write path with verification.
+- Their menu-bar refusal message is more explicit than ours.
+
+### Deliberately not done
+
+- No hover (`mouse_move`) or held-button background input — still
+  foreground-only by design.
+- The front lease is kept momentary and reported in every receipt rather
+  than hidden; keystroke risk is bounded to the lease window.
+- Codex baseline column remains `untested` (no Codex CLI run; kimi-cu
+  comparisons were live spot checks, recorded above).
+- No pushing, no releases, no posting — all commits are local.
