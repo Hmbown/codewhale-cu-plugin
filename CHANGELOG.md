@@ -47,6 +47,11 @@ receipts, batching, clipboard, preview and remote-computer surfaces.
   cursor drawn at each action's target — element-targeted actions update
   it too, not just pointer gestures. The real pointer never moves;
   `preview(enabled:false)` mutes it for the session.
+- **Source installs reuse the signed helper.** When the plugin runs from
+  a plain checkout (Kimi Code and other hosts' plugin dirs), the backend
+  now prefers `~/Applications/Codewhale Computer Use.app`'s signed helper
+  over compiling an unsigned one — so accessibility and screen-recording
+  grants carry over instead of re-prompting or silently failing.
 
 Live spot check on the maintainer Mac (macOS 26.1, arm64): real Chrome on
 a long ChatGPT page yields ~750 elements to depth 24 including the composer

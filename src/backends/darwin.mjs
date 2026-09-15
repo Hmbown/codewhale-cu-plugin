@@ -129,6 +129,13 @@ export function create({ exec }) {
       const packaged = fileURLToPath(new URL("../../bin/darwin/accessibility", import.meta.url));
       if (fs.existsSync(packaged)) helper = packaged;
     }
+    // A source checkout (plugin installs in other hosts) self-compiles an
+    // unsigned helper, which has no TCC grant. Prefer the installed app's
+    // signed helper so accessibility and screen-recording grants carry over.
+    if (!helper || !fs.existsSync(helper)) {
+      const installed = path.join(os.homedir(), "Applications", "Codewhale Computer Use.app", "Contents", "MacOS", "accessibility");
+      if (fs.existsSync(installed)) helper = installed;
+    }
     if (!helper || !fs.existsSync(helper)) {
       const source = fileURLToPath(new URL("./darwin-accessibility.m", import.meta.url));
       const hash = crypto.createHash("sha256").update(fs.readFileSync(source)).update(fs.readFileSync(new URL("./darwin-recording.h", import.meta.url))).update(fs.readFileSync(new URL("./darwin-ocr.h", import.meta.url))).digest("hex").slice(0, 16);
