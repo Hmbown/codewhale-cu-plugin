@@ -116,7 +116,11 @@ const MOUSE_MOVED = 5;
 
 export function create({ exec }) {
   const runL = (cmd, args, opts) => exec.run(cmd, args, opts);
-  const state = { activeDisplay: 1, lastRaster: null, inputApp: null, foregroundInput: false, previewEnabled: false, pointer: null, pointerLease: null };
+  // The preview panel is on by default: while a session is bound to an app,
+  // every action updates the floating capture and its drawn cursor so the
+  // person can watch without the real pointer moving. `preview(enabled:false)`
+  // mutes it for the session.
+  const state = { activeDisplay: 1, lastRaster: null, inputApp: null, foregroundInput: false, previewEnabled: true, pointer: null, pointerLease: null };
 
   async function nativeHelper() {
     let helper = process.env.CODEWHALE_CU_APP_BUNDLE
@@ -142,6 +146,11 @@ export function create({ exec }) {
   }
 
   async function native(tool, args = {}) {
+    // Every resolved target (element center or screen point) is where the
+    // action lands; tracking it here means the preview cursor follows element
+    // actions, not just raw pointer events.
+    const t = args?.target;
+    if (t && Number.isFinite(t.x) && Number.isFinite(t.y)) state.pointer = { x: t.x, y: t.y };
     if (tool === "pointer_sequence" && !args.app_scoped) requireSharedPointer();
     const helper = await nativeHelper();
     const r = await runL(helper, [JSON.stringify({ tool, args: { ...args, input_app_ref: state.inputApp, foreground_input: state.foregroundInput, owner_pipe: true } })], { timeoutMs: 20_000, ownerPipe: true });
@@ -156,7 +165,7 @@ export function create({ exec }) {
       throw error;
     }
     const result = tryJson(r.stdout, null);
-    if (state.previewEnabled && ["type", "key_event", "pointer_sequence", "set_value", "select_text", "perform_action", "hit_test"].includes(tool)) {
+    if (state.previewEnabled && state.inputApp && ["type", "key_event", "pointer_sequence", "set_value", "select_text", "perform_action", "hit_test", "click_element", "scroll_element", "focus_element"].includes(tool)) {
       try { await updatePreview(); } catch (error) { result.preview_error = error.message; }
     }
     return result;
@@ -594,6 +603,9 @@ export function create({ exec }) {
     // identity unmatchable.
     state.inputApp = { pid: p.pid, ...(p.bundle_id ? { bundle_id: p.bundle_id } : {}) };
     state.foregroundInput = !!activate;
+    // Surface the watch panel on bind; a capture failure (e.g. missing Screen
+    // Recording) must never block the bind itself.
+    if (state.previewEnabled) updatePreview(true).catch(() => {});
     return { launched: true, activate, keyboard_delivery: activate ? "foreground-guarded" : "process", input_scope: activate ? "shared-desktop" : "application", shared_pointer: !!activate, isolated_desktop: false, url: urlArg ?? null, resolved: p?.found ? { name: p.name, pid: p.pid, bundle_id: p.bundle_id, frontmost: p.frontmost } : null };
   }
 

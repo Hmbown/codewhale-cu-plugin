@@ -167,13 +167,15 @@ Observe once, act once, then verify.
     Acting on one fails `degenerate_frame` — scroll the real row into view
     and re-observe rather than retrying the same index.
   - `set_value` coerces numbers for `AXIncrementor`/`AXSlider`/`AXStepper`
-    and verifies the readback. If the receipt says the control kept its own
-    value (common on Electron/web elements), `focus` the element then `type`
-    the value instead.
+    and verifies the readback. Web-area elements refuse the `AXValue` write
+    entirely (it silently no-ops or clears web numeric controls) — `focus`
+    the element then `type` the value instead.
   Use app-scoped screenshots (`app_ref`) to avoid capturing unrelated windows.
-  Watching the preview does not authorize shared-desktop control. Enable it
-  only when the user asks to watch; disable it when finished. The preview is a
-  local app view, not an isolated desktop. Process-directed actions still
+  The nonactivating preview panel is on by default while an app is bound —
+  it shows the captured app window and a drawn cursor at each action's target
+  so the user can watch; the real pointer never moves. `preview(enabled:false)`
+  mutes it for the session. The preview is a local app view, not an isolated
+  desktop; watching it does not authorize shared-desktop control. Process-directed actions still
   change the target app: do not work in an app the user is actively editing.
   Close only disposable documents created by your task; never quit a user app.
 - Windows/Linux: raw input is foreground by nature; UIA/AT-SPI element actions

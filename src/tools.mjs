@@ -42,7 +42,7 @@ const targetSchema = {
 };
 
 export const TOOLS = [
-  { name: "preview", description: "macOS: show or hide a nonactivating app preview with the agent cursor. Off by default. Enable only when the user asks to watch; disable when finished. Open an application first; subsequent actions update its preview without taking over your mouse.", inputSchema: { type: "object", properties: { enabled: { type: "boolean" }, computer: computerParam }, additionalProperties: false } },
+  { name: "preview", description: "macOS: show or hide the nonactivating app preview with the drawn agent cursor. On by default while an app is bound — each action updates the captured window and cursor without moving the real pointer. Set enabled:false to mute it for the session.", inputSchema: { type: "object", properties: { enabled: { type: "boolean" }, computer: computerParam }, additionalProperties: false } },
   // ---- computers (switching is a default) ----
   {
     name: "computer_list",

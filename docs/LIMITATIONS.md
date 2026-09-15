@@ -30,8 +30,19 @@ Two honesty fixes on the action path:
   `NSNumber` (parsed with a POSIX `NSNumberFormatter`); a non-numeric string
   fails before dispatch with a focus-then-type instruction, and the result
   is read back so the receipt reports `verified` rather than asserting the
-  write. Electron/web text elements that ignore `AXValue` writes surface
-  that in the receipt note — the documented fallback is `focus` then `type`.
+  write. Elements under `AXWebArea` refuse the write entirely — Chromium
+  accepts `AXValue` sets and then ignores them or coerces the field empty —
+  with an instruction to `focus` the element and `type` instead.
+- **Web-area typing uses real key events.** `type` skips the
+  `AXSelectedText` path for elements under `AXWebArea` (Chromium accepts the
+  write and drops it) and sends process-bound unicode events after the
+  accessibility focus — still no pointer movement, still verified against
+  the control's own value.
+- **The preview panel is on by default** while an app is bound: each action
+  refreshes the captured window and draws the agent cursor at the action's
+  target — including element actions, not just pointer gestures. It is a
+  nonactivating panel; it never moves the real cursor. `preview(enabled:false)`
+  mutes it for the session.
 
 Live spot check (macOS 26.1, arm64, 2026-09-15): real Chrome on a long
 ChatGPT page observed ~750 elements to depth 24 including the composer
@@ -340,7 +351,8 @@ listing remain available.
   indistinguishable.
 - **macOS zoom** has single-Retina live receipts; nested zoom and mixed-display
   child rasters remain untested.
-- **macOS has an opt-in agent preview** with a drawn cursor. Other platforms
+- **macOS has an agent preview** with a drawn cursor, on by default while an
+  app is bound (0.6.0+; `preview(enabled:false)` mutes it). Other platforms
   have no equivalent preview.
 - **Each MCP session has its own input binding.** Session protocol 2 separates
   backend state in the long-running daemon. New clients also require background

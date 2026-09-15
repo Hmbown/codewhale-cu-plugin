@@ -417,6 +417,25 @@ static CGEventRef textEvent(NSString *text, BOOL down) {
 static BOOL cuTextRole(NSString *role) {
   return [@[@"AXTextField",@"AXTextArea",@"AXComboBox",@"AXSearchField",@"AXSecureTextField",@"AXWebArea"] containsObject:role];
 }
+/**
+ * Whether an element lives inside a browser/webview subtree. Chromium accepts
+ * AXSelectedText and AXValue writes on web controls and then ignores them —
+ * or, worse, a numeric control coerces the write to empty. Web elements get
+ * real keystrokes (after AXFocused) instead of semantic writes.
+ */
+static BOOL axHasWebAncestor(AXUIElementRef el) {
+  // `node` stays an `id` so ARC keeps each ancestor alive through the walk —
+  // a raw AXUIElementRef would dangle the moment `parent` is reassigned.
+  id node=(__bridge id)el;
+  for(int depth=0;node && depth<64;depth++) {
+    NSString *role=attr((__bridge AXUIElementRef)node,@"AXRole");
+    if([role isEqual:@"AXWebArea"]) return YES;
+    id parent=attr((__bridge AXUIElementRef)node,@"AXParent");
+    if(!parent || CFEqual((CFTypeRef)parent,(CFTypeRef)node)) break;
+    node=parent;
+  }
+  return NO;
+}
 // Without a readable selection range only an exact append can be verified.
 // Matching length or an already-present suffix is not evidence of delivery.
 static BOOL cuTypeVerified(NSString *before, NSString *after, NSString *text) {
@@ -458,7 +477,8 @@ static NSDictionary *cuType(NSDictionary *args, NSRunningApplication *inputApp, 
        && selected.location>=0 && selected.length>=0 && selected.location<=before.length && selected.length<=before.length-selected.location)
       expected=[before stringByReplacingCharactersInRange:NSMakeRange(selected.location,selected.length) withString:text];
   }
-  BOOL semantic=!simulated && focused && ![args[@"foreground_input"] boolValue] && cuSettable((__bridge AXUIElementRef)focused,@"AXSelectedText");
+  BOOL semantic=!simulated && focused && ![args[@"foreground_input"] boolValue] && cuSettable((__bridge AXUIElementRef)focused,@"AXSelectedText")
+    && !axHasWebAncestor((__bridge AXUIElementRef)focused);
   if(semantic) {
     cuCheckCancelled();
     AXError error=AXUIElementSetAttributeValue((__bridge AXUIElementRef)focused,kAXSelectedTextAttribute,(__bridge CFStringRef)text);
@@ -883,6 +903,8 @@ static id execute(NSDictionary *p) {
     }
     if([tool isEqual:@"set_value"]) {
       NSString *role=attr((__bridge AXUIElementRef)el,@"AXRole");
+      if(axHasWebAncestor((__bridge AXUIElementRef)el))
+        @throw [NSException exceptionWithName:@"value" reason:@"this element lives in a web area, which ignores background AXValue writes (numeric controls may even coerce them to empty). No write was sent — focus the element and use type instead, then verify with get_value." userInfo:nil];
       BOOL numeric=[@[@"AXIncrementor",@"AXSlider",@"AXStepper",@"AXValueIndicator",@"AXProgressIndicator"] containsObject:role];
       id value=args[@"value"];
       if(numeric) {
