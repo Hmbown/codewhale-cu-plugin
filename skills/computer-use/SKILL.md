@@ -55,7 +55,10 @@ Observe once, act once, then verify.
    shorter labels). `detail:"full"` adds nested menus and tree paths.
    `find_elements` searches a cached `state_id` or observes now. Missing
    labels or values mean unknown content, not something to guess. `get_value`
-   reads one field live.
+   reads one field live. On macOS, browsers and Electron/webview apps expose
+   page content as `AXWebArea` descendants; the first observation may arrive
+   while the page is still populating — re-observe if the tree looks
+   suspiciously shallow or a control you can see is absent.
 4. If the tree contains the target, act on the element: `focus` then `type`
    or `key` for composers (or pass the element `target` straight to
    `type`/`key` — it focuses first, in the same call), `set_value` for
@@ -103,13 +106,14 @@ Observe once, act once, then verify.
 
 ## Choosing targets
 
-- Element: `{"type":"element","state_id":"s-1","index":4}` — prefer this.
+- Element: `{"type":"element","index":4}` — prefer this. A bare index binds
+  that computer's latest observation; add `state_id` only to pin a specific
+  earlier snapshot (e.g. one returned by `wait_for` after newer observes).
   Elements are revalidated against the live tree before every action: if the
   element moved, the click lands on its fresh center and the receipt carries
   `target_reacquired: true`; if it no longer resolves (or changed role) the
-  call fails `element_stale` — call `get_app_state` again for a fresh
-  `state_id`. A `state_id` only works on the computer that issued it
-  (`state_wrong_computer`).
+  call fails `element_stale` — call `get_app_state` again. A `state_id` only
+  works on the computer that issued it (`state_wrong_computer`).
 - Coordinate: `{"type":"coordinate","x":496,"y":331}` — pixels from the latest
   raster only; submit `x`/`y` unchanged, never transform them yourself.
   `{"type":"coordinate","x":100,"y":200,"space":"screen"}` is an absolute
@@ -159,6 +163,13 @@ Observe once, act once, then verify.
     move or close the reported window.
   - An accessibility press refuses to cross a modal sheet
     (`window_blocked_by_modal_sheet`): deal with the sheet first.
+  - Virtualized lists vend collapsed placeholder rows (zero-size frames).
+    Acting on one fails `degenerate_frame` — scroll the real row into view
+    and re-observe rather than retrying the same index.
+  - `set_value` coerces numbers for `AXIncrementor`/`AXSlider`/`AXStepper`
+    and verifies the readback. If the receipt says the control kept its own
+    value (common on Electron/web elements), `focus` the element then `type`
+    the value instead.
   Use app-scoped screenshots (`app_ref`) to avoid capturing unrelated windows.
   Watching the preview does not authorize shared-desktop control. Enable it
   only when the user asks to watch; disable it when finished. The preview is a

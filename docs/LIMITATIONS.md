@@ -1,6 +1,44 @@
 # Limitations
 
 
+## Version 0.6.0 web-area traversal and targeting
+
+Observation now sets `AXEnhancedUserInterface` and `AXManualAccessibility` on
+target app elements before walking, so Chrome/Electron `AXWebArea` subtrees
+vend their page content (pre-0.6.0 builds saw only browser chrome — the
+"AXWebArea blindness" defect). Traversal budgets are depth 16 / 900 elements
+for summaries and depth 24 / 1600 for `detail:"full"` and `query`/`role`
+filtered observes; receipts still report `truncated:true` honestly on
+pathological pages. If an `AXWebArea` arrives with no descendants — the page
+was still populating — the observe retries once after 200 ms before
+returning. A re-observation remains the right answer when a control you can
+see is absent from the tree.
+
+Element targets no longer require `state_id`: `{type:"element", index}`
+binds the computer's latest observation, and an explicit `state_id` pins a
+specific earlier snapshot. Revalidation against the live tree is unchanged —
+stale or replaced elements still fail `element_stale` before any dispatch.
+
+Two honesty fixes on the action path:
+
+- **Degenerate frames.** Acting on a zero-size element (collapsed
+  virtualized-list rows report frames like `13x0` or `734x1`) fails
+  `degenerate_frame` with an instruction to scroll the row into view and
+  re-observe, instead of pressing a phantom rect.
+- **`set_value` on numeric controls.** `AXIncrementor`, `AXSlider`,
+  `AXStepper`, `AXValueIndicator` and `AXProgressIndicator` receive an
+  `NSNumber` (parsed with a POSIX `NSNumberFormatter`); a non-numeric string
+  fails before dispatch with a focus-then-type instruction, and the result
+  is read back so the receipt reports `verified` rather than asserting the
+  write. Electron/web text elements that ignore `AXValue` writes surface
+  that in the receipt note — the documented fallback is `focus` then `type`.
+
+Live spot check (macOS 26.1, arm64, 2026-09-15): real Chrome on a long
+ChatGPT page observed ~750 elements to depth 24 including the composer
+`AXTextArea` — versus ~85 flat browser-chrome elements under the same call
+before the change. This is one machine and one page, not a re-run of the
+family table below.
+
 ## Version 0.3.0 presentation and controls
 
 The new menu-bar setup panel, live session status, Pause/Stop, practice check
@@ -181,11 +219,15 @@ not Engine/model parity; see [the commands](DEMO.md).
 | family | observable (AX elements) | keyboard in background | accessibility press in background | window stays behind | verdict |
 |---|---|---|---|---|---|
 | AppKit (`parity/fixtures/native-macos.m`) | 101 | yes | yes | yes | **verified live** |
-| Browser — Google Chrome | 85 | target was frontmost | effect observed | not established | **background unqualified** |
+| Browser — Google Chrome | 85* | target was frontmost | effect observed | not established | **background unqualified** |
 | Chromium-based — Chromium | 122 | target was frontmost | effect observed | not established | **background unqualified** |
 | Electron — Visual Studio Code | 12 | **no** | no oracle-backed control to press | yes | **verified failed** |
 | Tk — python3 tkinter | 6 | **no** | **no** (no pressable element exists) | yes | **verified failed** |
 | Java — Swing/AWT | — | — | — | — | **untested** (no Java runtime on this host) |
+
+*Pre-0.6.0 count: the harness then could not see `AXWebArea` descendants, so
+85 was the browser chrome only. See "Version 0.6.0 web-area traversal" above;
+the input verdicts in this table are unaffected and still unrequalified.
 
 The two failures in detail:
 

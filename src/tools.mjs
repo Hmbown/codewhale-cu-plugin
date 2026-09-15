@@ -11,19 +11,21 @@ const strategyParam = {
   description: "macOS auto (default): element targets press that exact revalidated element and fail closed, with no coordinate fallback; coordinate targets hit-test the point for an accessibility press, including focus of a field that is not AXPressable. a11y: require an accessibility press or focus and fail closed otherwise. app: if accessibility cannot act, post a pointer event only when the point is inside the bound app's window, then restore the cursor — never a global desktop click. event: force the guarded raw pointer event (shared-desktop / activate:true). Other platforms use raw events. action_sent confirms dispatch, not the effect; observe again before deciding another action.",
 };
 
+const elementTargetSchema = {
+  type: "object",
+  description: "Element target: the flat index from the latest get_app_state on this computer. state_id is optional — supply it only to pin a specific earlier observation.",
+  required: ["type", "index"],
+  properties: {
+    type: { const: "element" },
+    state_id: { type: "string" },
+    index: { type: "integer", minimum: 0 },
+  },
+  additionalProperties: false,
+};
+
 const targetSchema = {
   oneOf: [
-    {
-      type: "object",
-      description: "Element target from the latest get_app_state on this computer.",
-      required: ["type", "state_id", "index"],
-      properties: {
-        type: { const: "element" },
-        state_id: { type: "string" },
-        index: { type: "integer", minimum: 0 },
-      },
-      additionalProperties: false,
-    },
+    elementTargetSchema,
     {
       type: "object",
       description: "Pixel coordinates in the latest returned raster (screenshot or zoom) for this computer.",
@@ -136,7 +138,7 @@ export const TOOLS = [
   },
   {
     name: "get_app_state",
-    description: "Read an application's text, controls, actions and layout without requiring vision. The default summary keeps app content and top-level menus; full adds nested menus and tree structure. Act using observed state_id/index targets and refresh after UI changes. Missing labels or values are unknown, not an invitation to guess; request a screenshot only when useful.",
+    description: "Read an application's text, controls, actions and layout without requiring vision. The default summary keeps app content and top-level menus; full adds nested menus and tree structure. Act on observed elements with {type:'element', index} and refresh after UI changes. Missing labels or values are unknown, not an invitation to guess; request a screenshot only when useful.",
     inputSchema: {
       type: "object",
       properties: {
@@ -246,11 +248,11 @@ export const TOOLS = [
   // ---- text & keyboard ----
   {
     name: "type", description: "Type unicode text into the focused control. Newlines in `text` are Return/Enter key presses, not literal characters — never put \\n in a composer by hoping it will send. Focus the field first (click, focus, or set_value), or pass an element `target` to focus it in the same call. On macOS the receipt carries `verified:true` only when the focused control's value actually reflects the typed text; on `verified:false` the text may have gone nowhere — observe again before relying on it.",
-    inputSchema: { type: "object", required: ["text"], properties: { text: { type: "string" }, press_enter: { type: "boolean", description: "After typing, press Return/Enter once. Prefer this to putting a newline in `text` when you want to send." }, target: { type: "object", description: "Element target from get_app_state; it is accessibility-focused first, then the text is typed. Element targets only.", required: ["type", "state_id", "index"], properties: { type: { const: "element" }, state_id: { type: "string" }, index: { type: "integer", minimum: 0 } }, additionalProperties: false }, computer: computerParam }, additionalProperties: false },
+    inputSchema: { type: "object", required: ["text"], properties: { text: { type: "string" }, press_enter: { type: "boolean", description: "After typing, press Return/Enter once. Prefer this to putting a newline in `text` when you want to send." }, target: { ...elementTargetSchema, description: "Element target from get_app_state; it is accessibility-focused first, then the text is typed. Element targets only." }, computer: computerParam }, additionalProperties: false },
   },
   {
     name: "key", description: "Press a named key or chord. Examples: return, enter, backspace, tab, escape, cmd+c (macOS), ctrl+c (Linux/Windows). This is the key-press tool; type() cannot send modifiers or Return by itself except via newlines/press_enter. Repeat with `repeat`. Pass an element `target` to accessibility-focus it first.",
-    inputSchema: { type: "object", required: ["text"], properties: { text: { type: "string" }, repeat: { type: "integer", minimum: 1, maximum: 100 }, target: { type: "object", description: "Element target from get_app_state; it is accessibility-focused first, then the key is sent. Element targets only.", required: ["type", "state_id", "index"], properties: { type: { const: "element" }, state_id: { type: "string" }, index: { type: "integer", minimum: 0 } }, additionalProperties: false }, computer: computerParam }, additionalProperties: false },
+    inputSchema: { type: "object", required: ["text"], properties: { text: { type: "string" }, repeat: { type: "integer", minimum: 1, maximum: 100 }, target: { ...elementTargetSchema, description: "Element target from get_app_state; it is accessibility-focused first, then the key is sent. Element targets only." }, computer: computerParam }, additionalProperties: false },
   },
   {
     name: "hold_key", description: "Hold a key for `duration` seconds (0.05..30).",

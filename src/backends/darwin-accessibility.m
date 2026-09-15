@@ -113,6 +113,21 @@ static id attr(AXUIElementRef el, NSString *name) {
   AXError e = AXUIElementCopyAttributeValue(el, (__bridge CFStringRef)name, &out);
   return e == kAXErrorSuccess ? CFBridgingRelease(out) : nil;
 }
+/**
+ * Opt the target into full accessibility. Chromium-family apps (Chrome,
+ * Electron) and WebKit content do not vend AXWebArea descendants until an
+ * assistive client sets AXEnhancedUserInterface; Firefox-style engines gate
+ * behind AXManualAccessibility. Without this an observe returns the chrome
+ * of the window — menu bar, toolbar, tab strip — and no page content at all.
+ * Apps that do not know these attributes simply refuse the write.
+ */
+static void axPrepare(AXUIElementRef app) {
+#ifdef CU_TEST
+  if([(__bridge id)app isKindOfClass:NSDictionary.class]) return;
+#endif
+  AXUIElementSetAttributeValue(app,(__bridge CFStringRef)@"AXEnhancedUserInterface",kCFBooleanTrue);
+  AXUIElementSetAttributeValue(app,(__bridge CFStringRef)@"AXManualAccessibility",kCFBooleanTrue);
+}
 static NSDictionary *geometry(id v, BOOL size) {
   if (!v || CFGetTypeID((__bridge CFTypeRef)v) != AXValueGetTypeID()) return nil;
   if (size) { CGSize s; if (AXValueGetValue((__bridge AXValueRef)v,kAXValueCGSizeType,&s)) return @{ @"w":@(s.width), @"h":@(s.height) }; }
@@ -169,7 +184,14 @@ static void walk(AXUIElementRef el, NSInteger win, NSArray *path, NSInteger dept
 static NSArray *observeElements(AXUIElementRef app, NSArray *ws, NSDictionary *args, BOOL listWindows, BOOL *truncated) {
   NSMutableArray *out=[NSMutableArray array];
   BOOL full=[args[@"detail"] isEqual:@"full"];
-  NSInteger limit=full?16:10, max=full?800:400;
+  // Web content nests deep: a browser form's controls commonly sit 12+ levels
+  // under the window, and a real page holds hundreds of controls. Depth and
+  // budget must cover that or every browser observe is silently headless.
+  // A filtered observe (query/role) is a targeted search, not a page dump, so
+  // it earns the deep budget — a control past the summary depth must still be
+  // findable.
+  BOOL deep=full||args[@"query"]||args[@"role"];
+  NSInteger limit=deep?24:16, max=deep?1600:900;
   if(!listWindows && !args[@"window_id"]) {
     // Open popup menus remain useful. Hidden menu-bar descendants belong in
     // the full view; summary reserves their budget for the app's actual UI.
@@ -188,6 +210,29 @@ static NSArray *observeElements(AXUIElementRef app, NSArray *ws, NSDictionary *a
     else walk((__bridge AXUIElementRef)ws[i],i,@[],0,limit,max,YES,out,truncated);
   }
   return out;
+}
+/**
+ * An AXWebArea whose recorded path produced no descendants is a page the walk
+ * could not see into — typically Chromium still assembling its accessibility
+ * subtree right after AXEnhancedUserInterface was set. Worth one re-observe
+ * after a short settle rather than reporting an empty page.
+ */
+static BOOL hasOrphanWebArea(NSArray *out) {
+  for(NSDictionary *d in out) {
+    if(![d[@"role"] isEqual:@"AXWebArea"]) continue;
+    NSArray *p=d[@"path"]; NSInteger w=[d[@"windowIndex"] integerValue];
+    BOOL kids=NO;
+    for(NSDictionary *e in out) {
+      if(e==d || [e[@"windowIndex"] integerValue]!=w) continue;
+      NSArray *q=e[@"path"];
+      if(q.count<=p.count) continue;
+      BOOL prefix=YES;
+      for(NSUInteger i=0;i<p.count;i++) if(![q[i] isEqual:p[i]]) { prefix=NO; break; }
+      if(prefix) { kids=YES; break; }
+    }
+    if(!kids) return YES;
+  }
+  return NO;
 }
 static BOOL cuFrame(AXUIElementRef el, CGRect *out) {
   NSDictionary *p=geometry(attr(el,@"AXPosition"),NO), *z=geometry(attr(el,@"AXSize"),YES);
@@ -239,6 +284,13 @@ static NSString *cuClickAction(AXUIElementRef el, BOOL context) {
   return nil;
 }
 static NSDictionary *cuClick(AXUIElementRef el, BOOL context) {
+  // A control whose rendered frame is empty is one a user could not click:
+  // virtualized lists and collapsed regions vend elements that do not exist on
+  // screen. Pressing one either does nothing or toggles a row the caller
+  // cannot see. Refuse with the recovery spelled out.
+  NSDictionary *sz=geometry(attr(el,@"AXSize"),YES);
+  if(sz && ([sz[@"w"] doubleValue]<=0 || [sz[@"h"] doubleValue]<=0))
+    @throw [NSException exceptionWithName:@"degenerate_frame" reason:@"target element has a degenerate frame (zero size); it is hidden or collapsed in a virtualized container — scroll it into view and observe again before clicking" userInfo:nil];
   NSString *action=cuClickAction(el,context);
   if(!action) @throw [NSException exceptionWithName:@"background_action_unavailable" reason:@"this control has no supported accessibility click; observe its advertised actions or use a separate computer" userInfo:nil];
   cuCheckCancelled();
@@ -373,6 +425,7 @@ static BOOL cuTypeVerified(NSString *before, NSString *after, NSString *text) {
 static id cuFocusedElement(pid_t pid) {
   AXUIElementRef appEl=AXUIElementCreateApplication(pid);
   AXUIElementSetMessagingTimeout(appEl,2.0);
+  axPrepare(appEl);
   id focused=attr(appEl,@"AXFocusedUIElement");
   CFRelease(appEl);
   return focused;
@@ -551,6 +604,7 @@ static id execute(NSDictionary *p) {
     NSRunningApplication *a=resolve(args[@"app_ref"]?:args[@"input_app_ref"]);
     if(!a) @throw [NSException exceptionWithName:@"app" reason:@"application not found" userInfo:nil];
     AXUIElementRef ax=AXUIElementCreateApplication(a.processIdentifier);
+    axPrepare(ax);
     NSArray *axWindows=attr(ax,@"AXWindows");
     NSInteger index=[args[@"window_id"] integerValue];
     CGRect preferred;
@@ -623,6 +677,7 @@ static id execute(NSDictionary *p) {
     CGPoint p=CGPointMake([args[@"x"] doubleValue],[args[@"y"] doubleValue]);
     AXUIElementRef appEl=AXUIElementCreateApplication(inputApp.processIdentifier);
     AXUIElementSetMessagingTimeout(appEl,2.0);
+    axPrepare(appEl);
     AXUIElementRef raw=NULL;
     AXError err=AXUIElementCopyElementAtPosition(appEl,(float)p.x,(float)p.y,&raw);
     id hit=nil;
@@ -778,13 +833,21 @@ static id execute(NSDictionary *p) {
   if(mutates && [a.bundleIdentifier isEqual:@"net.codewhale.computer-use"]) @throw [NSException exceptionWithName:@"protected" reason:@"Computer Use safety controls belong to the user." userInfo:nil];
   AXUIElementRef app=AXUIElementCreateApplication(a.processIdentifier);
   AXUIElementSetMessagingTimeout(app,2.0);
+  axPrepare(app);
   @try {
     NSArray *ws=attr(app,@"AXWindows")?:@[];
     NSDictionary *identity=@{@"found":@YES,@"name":a.localizedName?:@"",@"pid":@(a.processIdentifier),@"bundle_id":a.bundleIdentifier?:@"",@"frontmost":@(a.active)};
     if([tool isEqual:@"get_app_state"] || [tool isEqual:@"list_windows"]) {
       BOOL truncated=NO;
-      NSArray *out=observeElements(app,ws,args,[tool isEqual:@"list_windows"],&truncated);
-      NSMutableDictionary *d=[identity mutableCopy]; d[[tool isEqual:@"list_windows"]?@"windows":@"elements"]=out; d[@"truncated"]=@(truncated); return d;
+      BOOL list=[tool isEqual:@"list_windows"];
+      NSArray *out=observeElements(app,ws,args,list,&truncated);
+      if(!list && hasOrphanWebArea(out)) {
+        usleep(200000);
+        ws=attr(app,@"AXWindows")?:ws;
+        truncated=NO;
+        out=observeElements(app,ws,args,list,&truncated);
+      }
+      NSMutableDictionary *d=[identity mutableCopy]; d[list?@"windows":@"elements"]=out; d[@"truncated"]=@(truncated); return d;
     }
     if([tool isEqual:@"resolve_element"]) {
       NSInteger wi=[args[@"windowIndex"] integerValue];
@@ -818,18 +881,41 @@ static id execute(NSDictionary *p) {
       id v=attr((__bridge AXUIElementRef)el,@"AXValue");
       return @{@"ok":@YES,@"strategy":@"a11y",@"value":v?:[NSNull null],@"role":attr((__bridge AXUIElementRef)el,@"AXRole")?:[NSNull null]};
     }
-    if([tool isEqual:@"set_value"]) e=AXUIElementSetAttributeValue((__bridge AXUIElementRef)el,kAXValueAttribute,(__bridge CFTypeRef)args[@"value"]);
+    if([tool isEqual:@"set_value"]) {
+      NSString *role=attr((__bridge AXUIElementRef)el,@"AXRole");
+      BOOL numeric=[@[@"AXIncrementor",@"AXSlider",@"AXStepper",@"AXValueIndicator",@"AXProgressIndicator"] containsObject:role];
+      id value=args[@"value"];
+      if(numeric) {
+        // These controls type AXValue as a number. Writing a string is the
+        // classic "clears the field instead of setting it" bug — a web
+        // incrementor may coerce "" over "150" and report success.
+        if(![value isKindOfClass:NSNumber.class] || CFGetTypeID((__bridge CFTypeRef)value)==CFBooleanGetTypeID()) {
+          NSString *s=[value isKindOfClass:NSString.class]?value:[value description];
+          static NSNumberFormatter *fmt=nil;
+          if(!fmt) { fmt=[NSNumberFormatter new]; fmt.locale=[NSLocale localeWithLocaleIdentifier:@"en_US_POSIX"]; fmt.numberStyle=NSNumberFormatterDecimalStyle; }
+          NSNumber *n=[fmt numberFromString:s];
+          if(!n) @throw [NSException exceptionWithName:@"value" reason:[NSString stringWithFormat:@"%@ takes a numeric AXValue; %@ does not parse — focus the control and type instead",role?:@"this control",s] userInfo:nil];
+          value=n;
+        }
+      }
+      e=AXUIElementSetAttributeValue((__bridge AXUIElementRef)el,kAXValueAttribute,(__bridge CFTypeRef)value);
+      if(e==kAXErrorSuccess) {
+        usleep(60000);
+        id after=attr((__bridge AXUIElementRef)el,@"AXValue");
+        BOOL verified=NO;
+        if(numeric) verified=[after isKindOfClass:NSNumber.class] && fabs([after doubleValue]-[value doubleValue])<1e-6;
+        else verified=[after isKindOfClass:NSString.class] && [after isEqual:value];
+        NSMutableDictionary *done=[@{@"action_sent":@YES,@"strategy":@"a11y",@"role":role?:[NSNull null],@"after":after?:[NSNull null],@"verified":@(verified)} mutableCopy];
+        if(!verified) done[@"note"]=@"AXValue write did not verify: the control kept its own value (Electron/web text elements and numeric steppers commonly ignore background AXValue writes). Focus the element and use type instead, then verify with get_value.";
+        return done;
+      }
+    }
     else if([tool isEqual:@"focus_element"]) e=AXUIElementSetAttributeValue((__bridge AXUIElementRef)el,kAXFocusedAttribute,kCFBooleanTrue);
     else if([tool isEqual:@"select_text"]){ NSArray *r=args[@"text_range"]?:@[@0,@0]; if(r.count!=2 || [r[0] longValue]<0 || [r[1] longValue]<0) @throw [NSException exceptionWithName:@"range" reason:@"text_range must be [start, length], both nonnegative" userInfo:nil]; CFRange range=CFRangeMake([r[0] longValue],[r[1] longValue]); AXValueRef v=AXValueCreate(kAXValueCFRangeType,&range); e=AXUIElementSetAttributeValue((__bridge AXUIElementRef)el,kAXSelectedTextRangeAttribute,v); CFRelease(v); }
     else if([tool isEqual:@"perform_action"]){ CFArrayRef actions=NULL; AXUIElementCopyActionNames((__bridge AXUIElementRef)el,&actions); NSArray *names=CFBridgingRelease(actions); if(![names containsObject:args[@"action"]]) @throw [NSException exceptionWithName:@"action" reason:@"action is not advertised by this element" userInfo:nil]; cuCheckCancelled(); e=AXUIElementPerformAction((__bridge AXUIElementRef)el,(__bridge CFStringRef)args[@"action"]); }
     if(e!=kAXErrorSuccess) @throw [NSException exceptionWithName:@"action" reason:[NSString stringWithFormat:@"accessibility action failed: %d",e] userInfo:nil];
     NSMutableDictionary *done=[@{@"action_sent":@YES,@"strategy":@"a11y"} mutableCopy];
     if([tool isEqual:@"focus_element"]) done[@"focused"]=@YES;
-    if([tool isEqual:@"set_value"]) {
-      id after=attr((__bridge AXUIElementRef)el,@"AXValue");
-      done[@"after"]=after?:[NSNull null];
-      done[@"verified"]=@([after isKindOfClass:NSString.class] && [after isEqual:args[@"value"]]);
-    }
     return done;
   } @finally { CFRelease(app); }
 }

@@ -1,5 +1,51 @@
 # Release notes
 
+## 0.6.0 — web-area traversal and flat-index targeting
+
+The plugin could not see inside browser pages: `get_app_state` on Chrome
+returned the toolbar and tab strip but never descended into `AXWebArea`, so
+every control on the page was invisible to observe, target and verify. This
+version fixes the blindness and the interaction-model friction around it,
+matching the behavior kimi-cu demonstrated while keeping Codewhale's
+receipts, batching, clipboard, preview and remote-computer surfaces.
+
+- **macOS observation now unlocks web content.** The backend sets
+  `AXEnhancedUserInterface` + `AXManualAccessibility` on target app
+  elements before walking, so Chrome/Electron `AXWebArea` subtrees vend
+  their DOM. Traversal budgets grow to depth 16 / 900 elements for
+  summaries and depth 24 / 1600 for `detail:"full"` and `query`/`role`
+  filtered observes — a filtered find can now reach deeply nested web
+  controls. An `AXWebArea` that arrives with no descendants (page still
+  populating) triggers one 200 ms re-observation before returning.
+- **`state_id` is optional on element targets.** `{type:"element", index}`
+  binds the computer's latest observation — observe, then act on the flat
+  index, kimi-style. Passing `state_id` pins a specific earlier snapshot
+  (e.g. one returned by `wait_for`). Live-tree revalidation,
+  `element_stale`, `state_wrong_computer` and `target_reacquired` receipts
+  are unchanged.
+- **Degenerate-frame refusal.** Acting on a zero-size element — collapsed
+  placeholder rows vended by virtualized lists (`13x0`, `734x1`) — fails
+  `degenerate_frame` telling the caller to scroll the row into view and
+  re-observe, instead of pressing a phantom rect.
+- **`set_value` handles numeric controls honestly.** `AXIncrementor`,
+  `AXSlider`, `AXStepper`, `AXValueIndicator` and `AXProgressIndicator`
+  receive an `NSNumber` parsed with a POSIX `NSNumberFormatter`; a
+  non-numeric string fails before dispatch with a focus-then-type
+  instruction (previously a string write could clear the control). The
+  value is read back and reported as `verified`; web/Electron elements
+  that ignore `AXValue` writes get an explicit receipt note instead of a
+  silent claim.
+
+Live spot check on the maintainer Mac (macOS 26.1, arm64): real Chrome on
+a long ChatGPT page yields ~750 elements to depth 24 including the composer
+`AXTextArea`; the same call before the change returned ~85 browser-chrome
+elements. The OCI create-instance wizard (`cloud.oracle.com/compute/
+instances/create`) — the original repro — still wants a full end-to-end
+receipt before its rows in `docs/LIMITATIONS.md` can change.
+
+Source suite: 260 passed, 0 failed, 15 platform skips (`npm test`);
+Objective-C helper compiles clean in normal and `CU_TEST` builds.
+
 ## 0.5.0 — stateful waits and persistent SSH sessions
 
 The workflows that burned observe→wait→observe round-trips on dynamic UI now
