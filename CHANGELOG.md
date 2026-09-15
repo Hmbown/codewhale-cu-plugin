@@ -31,9 +31,13 @@ have a first-class wait, and SSH remotes are no longer one-shot-per-call.
   and re-observed — requests that may have run remotely before a timeout or
   disconnect are marked `requestDispatched` rather than silently retried.
 
-Source suite at this commit: 258 passed, 0 failed, 15 platform skips
-(`npm test`). This is a source release note; packaging, notarization, and
-publication receipts land in `docs/releases/0.5.0.json` when the build ships.
+Source suite at commit `b25f11c8673667329af2d9172aa57b153b9cc49d`:
+258 passed, 0 failed, 15 platform skips (`npm test`); live smoke on the
+maintainer Mac 23/23.
+
+0.5.0 is a Developer ID-signed, notarized universal macOS build from commit
+b25f11c8673667329af2d9172aa57b153b9cc49d, with its packaging receipt in
+[docs/releases/0.5.0.json](docs/releases/0.5.0.json).
 
 ## 0.4.0 — AX primitives
 
