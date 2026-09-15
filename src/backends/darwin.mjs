@@ -310,9 +310,11 @@ export function create({ exec }) {
         // Ownership is enforced by window containment inside the helper: the
         // events are addressed to a window id of the bound app, so a covered
         // background window is still safe — they cannot land on the coverer.
-        const r = await native("bg_pointer", { steps: clickSteps(button, x, y, clicks) });
+        const r = await native("bg_pointer", { steps: clickSteps(button, x, y, clicks),
+          ...(a11yReason === "web_popup_requires_real_click" ? { menu_poll_ms: 6000 } : {}) });
         return { action_sent: true, strategy: "window-record", input_scope: "application-window",
                  at: { x, y }, button, clicks, pointer_moved: false, front_lease: r.front_lease ?? true,
+                 ...(r.menu_lease_held ? { menu_lease_held: true } : {}),
                  window: r.window ?? null,
                  ...(a11yReason ? { a11y_reason: a11yReason } : {}) };
       }
@@ -681,7 +683,9 @@ export function create({ exec }) {
     list_windows: listWindows,
     open_application: openApplication,
     get_app_state: async ({ app_ref, detail, depth, window_id, include_ocr = false, ocr_region } = {}) => {
+      const t0 = Date.now();
       const t = await native("get_app_state", { app_ref: app_ref === undefined ? state.inputApp ?? undefined : app_ref, detail, window_id });
+      if (process.env.CODEWHALE_CU_DEBUG_OBSERVE) console.error(`observe ${Date.now() - t0}ms elements=${t.elements?.length} truncated=${t.truncated}`);
       if (!t.found) throw new ExecError("application not found — call list_apps for exact names/pids");
       if (include_ocr) {
         // Resolve once through AX, then capture only that exact application's

@@ -172,6 +172,11 @@ export function createDesktop({ parityDir, tasksDoc, isolated }) {
         `--window-size=${fx.size[0]},${fx.size[1]}`, `--window-position=${fx.position?.[0] ?? 0},${fx.position?.[1] ?? 40}`,
         "--no-first-run", "--no-default-browser-check", "--disable-features=Translate",
         "--force-renderer-accessibility",
+        // The runner hands focus back to the operator after launch, which can
+        // leave the fixture window fully covered; Chrome would then clamp the
+        // page's timers and dynamic-content tasks stall in "loading".
+        "--disable-background-timer-throttling", "--disable-renderer-backgrounding",
+        "--disable-backgrounding-occluded-windows",
       ], { stdio: "ignore", detached: true });
       repCtx.pid = proc.pid;
       await waitFor(() => browser.frame, 25_000, "browser fixture");

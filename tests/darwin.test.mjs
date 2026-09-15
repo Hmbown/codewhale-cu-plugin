@@ -49,7 +49,11 @@ test('native summary keeps text and top-level menus without spending the UI budg
     [{AXRole:'AXMenuItem',actions:['AXPick']},false,'AXPick'],
     [{AXRole:'AXButton',actions:['AXShowMenu']},true,'AXShowMenu'],
     [{AXRole:'AXButton',AXEnabled:false,actions:['AXPress']},false,null],
-    [{AXRole:'AXGroup',settable:['AXFocused']},false,'AXFocused'],
+    // Focusing anything but a text-entry role is not a click; the caller
+    // falls back to real delivery.
+    [{AXRole:'AXGroup',settable:['AXFocused']},false,null],
+    [{AXRole:'AXSearchField',settable:['AXFocused']},false,'AXFocused'],
+    [{AXRole:'AXGroup',settable:['AXFocused','AXSelectedText']},false,null],
   ]) {
     const r=spawnSync(binary,[JSON.stringify({tool:'inspect_click_action',args:{element,context}})],{encoding:'utf8'});
     assert.equal(r.status,0,r.stderr);

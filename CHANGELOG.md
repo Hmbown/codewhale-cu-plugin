@@ -4,31 +4,50 @@
 
 - **Background mouse input now reaches AppKit views without touching the
   user's cursor.** Process-directed mouse events (`CGEventPostToPid`) never
-  reach AppKit, and posting to the HID tap moves the real cursor. The new
-  route addresses each event to the target window id (event fields
+  reach AppKit, and posting to the HID tap moves the real cursor. The
+  production route addresses each event to the target window id (event fields
   `0x33`/`0x5b`/`0x5c`) with a window-space location
-  (`CGEventSetWindowLocation`) and posts it as a raw event record
-  (`SLPSPostEventRecordTo`). AppKit only dispatches mouse events to views
-  while its app is active, so the helper briefly leases the front process
-  with no-windows options and restores it in `@finally`, re-asserting the
-  previous app through the Accessibility grant when the restore lags.
+  (`CGEventSetWindowLocation`) and posts it as its raw event record through
+  `SLPSPostEventRecordTo`. Measured on macOS 26.1: view-level delivery
+  requires the window to be *key* — the window-focus record alone makes it
+  only *main* (events arrive and are swallowed) — so the helper takes a
+  momentary front-process lease with no-windows options and restores it in
+  `@finally`, re-asserting the previous app through the Accessibility grant
+  when the restore lags. Every receipt reports `front_lease` truthfully.
   - Coordinate `left_click`/`double_click`/`triple_click`/
-    `right_click`/`middle_click` on a point with no pressable AX element,
-    `left_click_drag`, and `scroll` where no AX scrollbar exists (overlay
-    scrollers, web pages) now deliver in background mode instead of
-    refusing with `shared_pointer_required`.
-  - Receipts say `strategy:"window-record"`, `pointer_moved:false` and
-    `front_lease:true`. The lease is a momentary front-process swap with
-    no window raise — a keystroke landing in exactly that window of time
-    would go to the target app, and that is why the lease is reported
-    rather than hidden.
-  - Delivery is by window id to a window owned by the bound app; events
-    cannot land on a window that covers the target. Unresolvable SkyLight
-    symbols fail closed as `bg_dispatch_unavailable`.
-  - Live receipts (macOS 26.1): AppKit fixture canvas drag delivers
-    down/dragged/up with the square ending in the drop zone
-    (`in_zone:true`); table wheel scroll moves `scroll_top` 0→12; the
-    real cursor position is unchanged across every gesture.
+    `right_click`/`middle_click` on a point with no pressable AX element and
+    `left_click_drag` now deliver in background mode instead of refusing
+    with `shared_pointer_required`. Delivery is by window id to a window
+    owned by the bound app, so events cannot land on a covering window.
+  - **Menus survive the flow.** A menu opened by a background click closes
+    the moment the lease ends, so menu-opening clicks hold the lease across
+    calls (state file + 15 s watchdog + restore at the next raw-input call,
+    and only while the target is still frontmost). Web popup buttons report
+    unpressable so they get a real click — `AXPress` does not open the
+    native menu — and the helper polls for the menu through Chromium's
+    post-activation AX rebuild. Observes poll for menu items while a menu
+    lease is held.
+  - **Wheel scrolling uses pixel units.** Chromium ignores line-unit wheel
+    events entirely (measured); one notch now maps to 40 px.
+  - **Astral-plane typing works in occluded windows.** The WindowServer
+    drops key translation for covered windows, losing surrogate-pair
+    graphemes (measured: "héllo wörld 日本 🐳" → "héllo wörld 日本 "). Any
+    multi-unit grapheme now routes the whole keystream through the record
+    channel under one lease; receipts say `keyboard_delivery:"window-record"`.
+  - **Activation repaired.** `open_application(activate:true)` uses the
+    WindowServer front-process channel (options 0x200) with the AXFrontmost
+    fallback, and the confirmation wait pumps the run loop — a one-shot
+    helper otherwise reads a stale NSWorkspace answer for seconds.
+  - **Observation rides out Chromium's a11y rebuilds.** Windows that vend
+    zero content are rebuilt-tree states, not empty pages: unfiltered
+    observes poll up to 2.4 s (longer while a menu lease is held) before
+    returning. Filtered observes are exempt — an empty match is a legitimate
+    answer.
+  - Live receipts (macOS 26.1): full parity suite 28/28 tasks × 5 reps —
+    background drag to a drop zone, `<select>` popup open + pick, native
+    file-picker upload, emoji into a fully occluded window — with the real
+    cursor position unchanged across every gesture and the operator's
+    foreground restored.
 
 ## 0.6.0 — web-area traversal and flat-index targeting
 

@@ -154,17 +154,37 @@ way it does. Receipts: `parity/results/darwin-aqua-2026-09-07.json`,
   hit test with the window rather than the control). A hit performs the
   element's supported click, focus or selection action: no pointer motion, no activation. The receipt says
   `strategy: "a11y"`.
-- **Background mode refuses shared pointer gestures.** With no pressable
-  element, and for raw double/triple/middle click, drag and hover,
-  the default `activate:false` binding returns `shared_pointer_required`.
-  Context menus and scrolling now use supported accessibility operations;
-  unavailable semantic operations fail without a raw pointer fallback.
-  Only explicit `activate:true` shared-desktop control permits the event tap.
-  That moves the user's cursor (it is put back
-  afterwards: `pointer_restored: true`; observed displacement is reported in
-  the matrix and can be nonzero on the shared desktop) and requires the target application to remain
-  frontmost. Gestures stop on focus loss and never reactivate the target. The receipt carries `strategy: "event"`, `pointer_moved: true`,
-  `foreground_taken`, `foreground_before` and `foreground_after`.
+- **Background mouse input now delivers through the window-record route.**
+  Process-directed mouse events (`CGEventPostToPid`) never reach AppKit views
+  and posting to the HID tap moves the real cursor (both measured). The
+  production route addresses each event to the target window id (event fields
+  `0x33`/`0x5b`/`0x5c`) with a window-space location
+  (`CGEventSetWindowLocation`) and posts it as its raw event record through
+  `SLPSPostEventRecordTo`. View-level delivery requires the window to be
+  *key*: the window-focus record posted before each gesture makes it *main*
+  — events then arrive at the process and are swallowed by first-mouse
+  semantics — so the helper also takes a momentary front-process lease with
+  no-windows options and restores it in `@finally`, re-asserting the previous
+  app through the Accessibility grant when the restore lags. Coordinate
+  clicks with no pressable element, `left_click_drag`, raw double/triple/
+  middle click and scrollbar-less `scroll` deliver this way in background
+  mode. Receipts report `strategy:"window-record"`, `pointer_moved:false`
+  and `front_lease:true` — the lease is a momentary front-process swap with
+  no window raise, reported because a keystroke in exactly that window would
+  go to the target app. Delivery is by window id to a window owned by the
+  bound app, so events cannot land on a window covering the target. Wheel
+  events use pixel units because Chromium ignores line-unit scrolls. Menus
+  opened by a click close when the lease ends, so menu-opening clicks hold
+  the lease across calls (15 s watchdog cap, restored at the next raw-input
+  call, never yanked back when the user takes another app first).
+- **Shared pointer gestures remain explicit.** `strategy:"event"` and the
+  held-button tools (`mouse_move`, `left_mouse_down`/`left_mouse_up`) still
+  require `activate:true` shared-desktop control. That moves the user's
+  cursor (it is put back afterwards: `pointer_restored: true`) and requires
+  the target application to remain frontmost. Gestures stop on focus loss
+  and never reactivate the target. The receipt carries `strategy: "event"`,
+  `pointer_moved: true`, `foreground_taken`, `foreground_before` and
+  `foreground_after`.
 - **The foreground cannot be given back.** macOS 14+ ignores activation
   requests from a process that is not itself frontmost — measured for both
   `-[NSRunningApplication activateWithOptions:]` and setting `AXFrontmost`. The

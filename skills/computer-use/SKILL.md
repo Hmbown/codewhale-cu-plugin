@@ -134,19 +134,18 @@ Observe once, act once, then verify.
     Prefer them. Text entry uses writable accessibility selection when
     available; verify the resulting value. `get_app_state`, `list_windows`
     and `screenshot` default to the selected app.
-  - **Background mode never takes the shared pointer.** A coordinate
+  - **Background mode never moves the user's cursor.** A coordinate
     `left_click` first tries the bound application's accessibility action,
     including focusing a field that is not AXPressable. `right_click` uses
     advertised context-menu actions. `scroll` uses the target's accessibility
     scrollbar; prefer a scroll-area element and read the receipt's unit and
-    value change. If accessibility cannot act, `strategy:"app"` posts a
-    pointer event only when the point is inside the bound app's window, then
-    restores the cursor — not a global desktop click. Raw double/triple/middle
-    click, drag, hover, and `strategy:"event"` fail with
-    `shared_pointer_required` before moving the cursor. Missing semantic
-    scrolling or context-menu support is a refusal, never permission to
-    activate. Use `strategy:"app"`, another advertised accessibility action,
-    or a separate computer.
+    value change. Where accessibility cannot act — a point with no pressable
+    element, drag, raw double/triple/middle click, wheel scrolling without an
+    AX scrollbar — the window-record route delivers genuine mouse/wheel
+    events to the bound app's window: the cursor never moves, and a momentary
+    no-raise front-process lease is taken and restored (every receipt says
+    `strategy:"window-record"`, `pointer_moved:false`, `front_lease:true`).
+    Only hover and held-button tools still need `activate:true`.
   - Shared-desktop gestures and foreground keyboard delivery require explicit
     user authorization for exclusive desktop use, followed by
     `open_application(activate:true)`. Do not select it merely to work around a
