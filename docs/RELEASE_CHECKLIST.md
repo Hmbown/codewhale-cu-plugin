@@ -198,6 +198,7 @@ receipts belong in a public issue.
 - [x] **Repository visibility change** — public since 2026-09-13 (human).
 - [x] **Publish release** — v0.3.1 published 2026-09-13 by Hunter Bown (human); tag on `44bf9fcde4bebacf3d69d03d08972ba02b0d1bc5`; anonymous download verified (size 79,720,031, SHA-256 match, Gatekeeper accepted as Notarized Developer ID, stapled ticket valid).
 - [x] **Publish release** — v0.4.0 published 2026-09-13 (PDT) at Hunter Bown's direction (GitHub release created and published by Claude Fable 5.1 from the human's authenticated `gh` session); tag on `e03e206b50ca5e52e72042e126d7afd08e85d49e`; GitHub's asset digests match the receipt (zip 753565134e9f…, dmg 3ee12be851a9…); anonymous download of `release.json` verified.
+- [x] **Publish release** — v0.5.0 published 2026-09-15 (PDT) at Hunter Bown's direction (GitHub release created and published by Devin from the human's authenticated `gh` session); tag on `8a7b7dd`; GitHub's asset digests match the receipt (zip b5688ccbe117…, dmg 56aa7097e5ad…).
 
 ---
 

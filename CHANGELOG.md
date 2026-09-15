@@ -37,7 +37,10 @@ maintainer Mac 23/23.
 
 0.5.0 is a Developer ID-signed, notarized universal macOS build from commit
 b25f11c8673667329af2d9172aa57b153b9cc49d, with its packaging receipt in
-[docs/releases/0.5.0.json](docs/releases/0.5.0.json).
+[docs/releases/0.5.0.json](docs/releases/0.5.0.json). It was published on
+2026-09-15 (PDT) as the [v0.5.0 GitHub release](https://github.com/Hmbown/codewhale-cu-plugin/releases/tag/v0.5.0);
+the setup page at https://codewhale.net/computer-use offers the download and
+**Check for updates…** in an installed 0.4.0 app offers it.
 
 ## 0.4.0 — AX primitives
 
