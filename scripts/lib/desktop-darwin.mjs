@@ -152,6 +152,11 @@ export function createDesktop({ parityDir, tasksDoc, isolated }) {
 
   async function launchFixture(kind, repCtx) {
     const fx = TASKS_DOC.fixtures[kind];
+    // Chrome activates itself on launch no matter how it is spawned (verified
+    // for both direct exec and `open -g`), which steals the operator's typing
+    // focus. Remember who was frontmost and hand activation back once the
+    // fixture is up; input is process-bound, so the fixture never needs focus.
+    const frontBefore = probeDesktop()?.frontmost_pid ?? -1;
     if (kind === "browser") {
       if (!fs.existsSync(CHROME)) throw new Error(`Google Chrome is not installed at ${CHROME}`);
       browser = { state: null, frame: null, seq: -1 };
@@ -171,6 +176,7 @@ export function createDesktop({ parityDir, tasksDoc, isolated }) {
       repCtx.pid = proc.pid;
       await waitFor(() => browser.frame, 25_000, "browser fixture");
       repCtx.ax = await waitForAccessibility(proc.pid);
+      restoreFocus(frontBefore, repCtx);
       return proc;
     }
     if (kind === "native") {
@@ -181,9 +187,16 @@ export function createDesktop({ parityDir, tasksDoc, isolated }) {
       await waitFor(() => {
         try { return JSON.parse(fs.readFileSync(stateFile, "utf8")).origin ? true : false; } catch { return false; }
       }, 25_000, "native fixture");
+      restoreFocus(frontBefore, repCtx);
       return proc;
     }
     return null;
+  }
+
+  /** Give foreground activation back to whoever held it before the launch. */
+  function restoreFocus(pid, repCtx) {
+    if (!pid || pid <= 0 || pid === process.pid || pid === repCtx?.pid) return;
+    try { sh(helper("probe", "darwin-probe.m"), ["--restore-focus", String(pid)], { timeoutMs: 5_000 }); } catch {}
   }
 
   /** Selection happens through the recorded prelude, not out-of-band focus. */
