@@ -32,16 +32,31 @@ receipts, batching, clipboard, preview and remote-computer surfaces.
   receive an `NSNumber` parsed with a POSIX `NSNumberFormatter`; a
   non-numeric string fails before dispatch with a focus-then-type
   instruction (previously a string write could clear the control). The
-  value is read back and reported as `verified`; web/Electron elements
-  that ignore `AXValue` writes get an explicit receipt note instead of a
-  silent claim.
+  value is read back and reported as `verified`. Elements under
+  `AXWebArea` refuse `set_value` before dispatch entirely — Chromium
+  accepts `AXValue` sets and then ignores them, or a numeric control
+  coerces the write to empty — with an instruction to `focus` the
+  element and `type` instead.
+- **Web-area typing uses real key events.** `type` skips the
+  `AXSelectedText` semantic path for elements under `AXWebArea`
+  (Chromium accepts the write and drops it) and sends process-bound
+  unicode events after accessibility focus — still no pointer movement,
+  still verified against the control's own value.
+- **The preview panel is on by default** while an app is bound: a
+  nonactivating mini view of the captured app window with the agent
+  cursor drawn at each action's target — element-targeted actions update
+  it too, not just pointer gestures. The real pointer never moves;
+  `preview(enabled:false)` mutes it for the session.
 
 Live spot check on the maintainer Mac (macOS 26.1, arm64): real Chrome on
 a long ChatGPT page yields ~750 elements to depth 24 including the composer
 `AXTextArea`; the same call before the change returned ~85 browser-chrome
-elements. The OCI create-instance wizard (`cloud.oracle.com/compute/
-instances/create`) — the original repro — still wants a full end-to-end
-receipt before its rows in `docs/LIMITATIONS.md` can change.
+elements. An OCI-style create-instance form driven end-to-end through the
+installed app — background, flat indices, no pointer movement — typed the
+name field (`verified:true`), pressed the radio, refused the web
+incrementor, filled the textarea and produced `created:<name>`. The real
+OCI wizard (`cloud.oracle.com/compute/instances/create`) still wants its
+own receipt before the `docs/LIMITATIONS.md` rows change.
 
 Source suite: 260 passed, 0 failed, 15 platform skips (`npm test`);
 Objective-C helper compiles clean in normal and `CU_TEST` builds.
