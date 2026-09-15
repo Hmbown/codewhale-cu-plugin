@@ -225,3 +225,19 @@ rebuilt + restarted, plugin dir rsynced.
 - Codex baseline column remains `untested` (no Codex CLI run; kimi-cu
   comparisons were live spot checks, recorded above).
 - No pushing, no releases, no posting — all commits are local.
+
+## Round 7 — set_value on web text fields (last known capability gap closed)
+
+- Direct `AXValue` writes on web elements stay refused, but the backend now
+  answers with the replacement path instead of an instruction: focus,
+  `cmd+a` through the new `bg_key` record-channel primitive (menu key
+  equivalents only validate against a key window — plain process-posted
+  cmd+a and AX selection-range writes were both measured no-ops), type,
+  read-back verify. Live on the fixture: a pre-filled web field became
+  exactly the new value, `verified:true`, `strategy:"focus-type-replace"`.
+- Final gate: full parity 28/28 × 5 reps (run
+  `darwin-aqua-2026-09-15T15-45-34-087Z`), npm test 260/0/15. Installed app
+  rebuilt and restarted; plugin dir rsynced.
+- Net against kimi-cu: every advertised capability of theirs now exists
+  here, and background drag, occluded astral typing, and focus restoration
+  work where theirs measurably don't on this machine.
