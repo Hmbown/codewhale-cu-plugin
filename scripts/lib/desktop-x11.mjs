@@ -282,11 +282,14 @@ async function launchFixture(kind, repCtx) {
     repCtx.winId = id;
     // The window maps before the page's first CU-FIXTURE title write; a task
     // that samples the oracle in that gap sees nulls the run counts as fails.
-    const stateDeadline = Date.now() + 15_000;
-    while (Date.now() < stateDeadline) {
-      if (await oracleState({ fixture: "browser" }, repCtx)) break;
+    // Fatal when it never becomes readable: a renderer that never publishes
+    // state is a fixture failure, not a task result.
+    let ready = false;
+    const stateDeadline = Date.now() + 40_000;
+    while (Date.now() < stateDeadline && !(ready = await oracleState({ fixture: "browser" }, repCtx))) {
       await new Promise((r) => setTimeout(r, 200));
     }
+    if (!ready) throw new Error("browser fixture window mapped but never published a CU-FIXTURE state");
     // Wait (bounded) for the renderer's a11y tree so the content origin can
     // be measured via AT-SPI; fall back to the window origin if it never shows.
     const deadline = Date.now() + 8_000;
