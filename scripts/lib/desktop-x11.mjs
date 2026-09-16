@@ -343,11 +343,20 @@ async function oracleState(task, repCtx) {
   if (task.fixture === "browser") {
     const id = repCtx.winId;
     if (!id) return null;
-    const t = xd(workDisplay, ["getwindowname", id]).stdout.trim();
     const prefix = TASKS_DOC.fixtures.browser.title_prefix;
-    const i = t.indexOf(prefix);
-    if (i === -1) return null;
-    try { return JSON.parse(t.slice(i + prefix.length)); } catch { return null; }
+    // A transient xdotool spawn/read failure (or a mid-write title) must not
+    // masquerade as a task result: retry the measurement briefly before
+    // reporting null. A genuinely missing window still reads null after the
+    // retries, so real absences are unchanged — only slower to report.
+    for (let attempt = 0; attempt < 4; attempt++) {
+      const t = xd(workDisplay, ["getwindowname", id]).stdout.trim();
+      const i = t.indexOf(prefix);
+      if (i !== -1) {
+        try { return JSON.parse(t.slice(i + prefix.length)); } catch {}
+      }
+      if (attempt < 3) await new Promise((r) => setTimeout(r, 150));
+    }
+    return null;
   }
   if (task.fixture === "native") {
     try { return JSON.parse(fs.readFileSync(repCtx.nativeStateFile, "utf8")); } catch { return null; }
