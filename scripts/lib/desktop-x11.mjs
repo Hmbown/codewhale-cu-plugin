@@ -276,6 +276,9 @@ async function launchFixture(kind, repCtx) {
       `--window-size=${fx.size[0]},${fx.size[1]}`, "--window-position=0,0",
       "--no-first-run", "--disable-features=Translate", "--force-renderer-accessibility",
     ], { env: { ...process.env, ...baseEnv() }, stdio: "ignore", detached: true });
+    // detached makes proc.pid a session leader; killFixture sweeps the whole
+    // session because chromium children setpgid out of the group kill.
+    proc.cuSessionId = proc.pid;
     fixtureProcs.push(proc);
     const id = findWindow(fx.title_prefix, 15_000, proc.pid);
     if (!id) throw new Error("browser fixture window did not appear");
@@ -328,17 +331,34 @@ function focusFixture(repCtx) {
   }
 }
 
+/** All live processes whose session id equals sid — /proc/<pid>/stat field 6.
+ * The sweep catches descendants that setpgid out of the launcher group. */
+function sessionMembers(sid) {
+  const out = [];
+  for (const e of fs.readdirSync("/proc")) {
+    if (!/^\d+$/.test(e) || Number(e) === process.pid) continue;
+    try {
+      const rest = fs.readFileSync(`/proc/${e}/stat`, "utf8").split(")").pop().trim().split(" ");
+      if (Number(rest[3]) === sid) out.push(Number(e));
+    } catch {}
+  }
+  return out;
+}
+
 async function killFixture(proc) {
   if (!proc) return;
   try { process.kill(-proc.pid ?? proc.pid, "SIGTERM"); } catch { try { proc.kill("SIGTERM"); } catch {} }
   try { proc.kill("SIGTERM"); } catch {}
   const deadline = Date.now() + 2500;
   while (Date.now() < deadline) {
-    try { process.kill(proc.pid, 0); } catch { return; }
+    try { process.kill(proc.pid, 0); } catch { break; }
     await new Promise((r) => setTimeout(r, 150));
   }
   try { process.kill(-proc.pid, "SIGKILL"); } catch {}
   try { proc.kill("SIGKILL"); } catch {}
+  if (proc.cuSessionId) {
+    for (const p of sessionMembers(proc.cuSessionId)) { try { process.kill(p, "SIGKILL"); } catch {} }
+  }
 }
 
 
