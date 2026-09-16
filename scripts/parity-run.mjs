@@ -517,7 +517,15 @@ async function main() {
   const reps = [];
   for (const task of tasks) {
     for (let i = 0; i < REPEATS; i++) {
-      const rep = await runRep(task, i + 1, ctx);
+      let rep = await runRep(task, i + 1, ctx);
+      // A runner-class failure means the fixture never ran the task — the rep
+      // is not a capability sample. Retry once and keep the retry visible in
+      // the receipt via launch_retry.
+      if (rep.status === "failed" && /^runner:/.test(rep.failReason ?? "")) {
+        const retry = await runRep(task, i + 1, ctx);
+        retry.launch_retry = rep.failReason;
+        rep = retry;
+      }
       reps.push(rep);
       const mark = rep.status === "ok" ? "ok" : rep.status === "skipped" ? `SKIP(${rep.reason})` : `FAIL(step ${rep.failStep}: ${rep.failReason})`;
       console.log(`  ${task.id} rep ${i + 1}/${REPEATS}: ${mark} [${rep.elapsed_ms}ms, ${rep.toolCalls} calls, drift=${rep.interference.pointer_displacement_px}px]`);
