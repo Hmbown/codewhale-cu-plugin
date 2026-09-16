@@ -9,7 +9,7 @@ true so they do not re-derive it.
 |---|---|---|---|
 | macOS (Aqua) | `src/backends/darwin.mjs` + `darwin-accessibility.m` | `scripts/lib/desktop-darwin.mjs` | 27 tasks × 5 repeats, 24 demonstrated — `parity/results/darwin-aqua-2026-09-07.json` |
 | Linux (X11) | `src/backends/linux.mjs` | `scripts/lib/desktop-x11.mjs` | 27 tasks × 5 repeats, 26 demonstrated — but recorded **before** the runner was split into engine + drivers, and not re-run since |
-| Windows | `src/backends/win32.mjs` | **none** | none |
+| Windows | `src/backends/win32.mjs` | `scripts/lib/desktop-win32.mjs` | none yet — driver exists but needs a real Windows desktop run (see below) |
 | Wayland | `src/backends/linux.mjs` (wayland paths) | none (the X11 driver is X11-only) | none |
 
 **You do not need an Ubuntu machine to start.** `docker/run.sh parity` builds
@@ -25,6 +25,19 @@ reproduce `parity/results/linux-x11-2026-09-06.json` and
 `parity/results/linux-xvfb-isolated-2026-09-07.json`. The X11 driver is a
 verbatim move of the code those runs used; nothing in it was rewritten. If a
 row moves, the refactor is where to look first.
+
+**First job on Windows:** the driver exists (`scripts/lib/desktop-win32.mjs`)
+but has no receipts. It needs a real interactive Windows desktop — a Windows
+VM (Parallels/UTM/VMware) or a cloud Windows host — with Node.js, Chrome and
+Python 3 + Tk (the python.org installer bundles tcl/tk). There is no
+`--isolated` route: Windows containers have no interactive desktop, and a
+second session is a different user's desktop, so the shared console session
+is the only surface and interference is measured, not engineered away.
+A CI `windows-latest` run is not a user's desktop; say plainly which produced
+any receipt. The suite file is `parity/tasks.win32.json`: held-input rows and
+`control.permission_denied` carry committed skip reasons, and `browser.upload`
+drives the common "Open" dialog (typed path + Return commits; no
+`window_title` click needed).
 
 ## How the runner is put together
 
@@ -61,8 +74,8 @@ Register it in the `DRIVERS` map at the top of `scripts/parity-run.mjs`.
   thing under test also reports the result, the run proves nothing.
 - **Interference is sampled by something that shares no code with the backend.**
   X11 uses `xdotool`; macOS uses `parity/darwin-probe.m`, a standalone
-  CoreGraphics/AppKit binary. Windows would want a small equivalent
-  (`GetCursorPos` + `GetForegroundWindow`).
+  CoreGraphics/AppKit binary; Windows uses `parity/win32-probe.ps1`, a
+  standalone `GetCursorPos` + `GetForegroundWindow` script.
 - **Fixtures report their own geometry where they can.** Measuring a window
   from outside means guessing where the title bar and decorations end.
   `parity/fixtures/native.py` and `native-macos.m` both publish their content

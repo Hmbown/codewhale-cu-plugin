@@ -87,7 +87,7 @@ Every row marked **untested** in the matrix's "Platforms" table appears here:
 | macOS Retina | local 0.2.1 development receipts on one arm64 Mac (macOS 26.1): 26-task run 129/130, dynamic-page retry 5/5, upload retry 5/5; all 27 workflows have five-trial passing evidence, with earlier failures retained; final artifact and full Codex parity remain separate |
 | macOS non-Retina | code-complete; every macOS receipt so far is from a 2x display |
 | macOS mixed | code-complete, no receipts (mixed-scale display moves are unprobed live) |
-| Windows | code-complete, no receipts (backend is PowerShell/user32; never executed here) |
+| Windows | code-complete, no receipts (backend is PowerShell/user32; never executed here). A parity driver now exists (`scripts/lib/desktop-win32.mjs`, `parity/tasks.win32.json`, `parity/win32-probe.ps1`) but needs a real Windows desktop run — Windows cannot be containerized and the shared console session is the only surface |
 | Wayland | code-complete, no receipts; `scroll` is unsupported on Wayland (`scroll on Wayland is not available in this build`), and ydotool input is never probed (the probe cannot move the pointer) |
 | HarmonyOS (hdc) | code-complete, no receipts (no device) |
 | SSH remote | experimental transport; persistent agent sessions (`agent --serve`) since 0.5.0, with one-shot fallback for older agents; no remote device receipts; see session limitation below |
