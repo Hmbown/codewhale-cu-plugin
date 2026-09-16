@@ -280,29 +280,36 @@ async function launchFixture(kind, repCtx) {
     // session because chromium children setpgid out of the group kill.
     proc.cuSessionId = proc.pid;
     fixtureProcs.push(proc);
-    const id = findWindow(fx.title_prefix, 15_000, proc.pid);
-    if (!id) throw new Error("browser fixture window did not appear");
-    repCtx.winId = id;
-    // The window maps before the page's first CU-FIXTURE title write; a task
-    // that samples the oracle in that gap sees nulls the run counts as fails.
-    // Fatal when it never becomes readable: a renderer that never publishes
-    // state is a fixture failure, not a task result.
-    let ready = false;
-    const stateDeadline = Date.now() + 40_000;
-    while (Date.now() < stateDeadline && !(ready = await oracleState({ fixture: "browser" }, repCtx))) {
-      await new Promise((r) => setTimeout(r, 200));
+    try {
+      const id = findWindow(fx.title_prefix, 15_000, proc.pid);
+      if (!id) throw new Error("browser fixture window did not appear");
+      repCtx.winId = id;
+      // The window maps before the page's first CU-FIXTURE title write; a task
+      // that samples the oracle in that gap sees nulls the run counts as fails.
+      // Fatal when it never becomes readable: a renderer that never publishes
+      // state is a fixture failure, not a task result.
+      let ready = false;
+      const stateDeadline = Date.now() + 40_000;
+      while (Date.now() < stateDeadline && !(ready = await oracleState({ fixture: "browser" }, repCtx))) {
+        await new Promise((r) => setTimeout(r, 200));
+      }
+      if (!ready) throw new Error("browser fixture window mapped but never published a CU-FIXTURE state");
+      // Wait (bounded) for the renderer's a11y tree so the content origin can
+      // be measured via AT-SPI; fall back to the window origin if it never shows.
+      const deadline = Date.now() + 8_000;
+      while (Date.now() < deadline) {
+        const info = xwininfo(id);
+        const doc = atspiDocOrigin();
+        if (doc) { repCtx.docOffset = { x: doc.x - info.abs.x, y: doc.y - info.abs.y }; break; }
+        await new Promise((r) => setTimeout(r, 500));
+      }
+      return proc;
+    } catch (e) {
+      // A throw after spawn leaves the caller's proc unset; the browser
+      // family would leak live onto the display and into AT-SPI lookups.
+      await killFixture(proc);
+      throw e;
     }
-    if (!ready) throw new Error("browser fixture window mapped but never published a CU-FIXTURE state");
-    // Wait (bounded) for the renderer's a11y tree so the content origin can
-    // be measured via AT-SPI; fall back to the window origin if it never shows.
-    const deadline = Date.now() + 8_000;
-    while (Date.now() < deadline) {
-      const info = xwininfo(id);
-      const doc = atspiDocOrigin();
-      if (doc) { repCtx.docOffset = { x: doc.x - info.abs.x, y: doc.y - info.abs.y }; break; }
-      await new Promise((r) => setTimeout(r, 500));
-    }
-    return proc;
   }
   if (kind === "native") {
     const stateFile = path.join(repCtx.dir, "native-state.json");
@@ -311,7 +318,10 @@ async function launchFixture(kind, repCtx) {
     });
     fixtureProcs.push(proc);
     const id = findWindow(fx.title_prefix, 15_000, proc.pid);
-    if (!id) throw new Error("native fixture window did not appear");
+    if (!id) {
+      try { proc.kill("SIGKILL"); } catch {}
+      throw new Error("native fixture window did not appear");
+    }
     repCtx.winId = id;
     repCtx.nativeStateFile = stateFile;
     return proc;
@@ -391,6 +401,12 @@ async function oracleState(task, repCtx) {
     sessionType,
     async start() { if (ISOLATED) await startIsolated(); geometry(); },
     stop() {
+      // Backstop for any fixture family a rep failed to reap (e.g. a launch
+      // error path before killFixture existed for it).
+      for (const p of fixtureProcs) {
+        try { process.kill(-p.pid, "SIGKILL"); } catch { try { p.kill("SIGKILL"); } catch {} }
+        if (p.cuSessionId) for (const m of sessionMembers(p.cuSessionId)) { try { process.kill(m, "SIGKILL"); } catch {} }
+      }
       if (wm) try { wm.kill(); } catch {}
       if (isoBusPid) try { process.kill(isoBusPid); } catch {}
       if (xvfb) try { xvfb.kill(); } catch {}
