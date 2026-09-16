@@ -590,24 +590,30 @@ print(json.dumps({"found": True, "reason": None, "element": {
       await probeSession();
       if (session === "x11") {
         // xdotool `type` remaps a spare keycode for characters absent from the
-        // current keymap. For a cased letter that produces a single-symbol key
-        // whose XKB level 0 is the lowercase form, so non-ASCII capitals (Ü →
-        // ü) lose their case. Route each uppercase non-ASCII char through
-        // `key shift+U<hex>` — an explicit press with Shift held — and batch
-        // the rest through `type` as before.
+        // current keymap. Two failure modes follow: a cased letter produces a
+        // single-symbol key whose XKB level 0 is the lowercase form (Ü → ü),
+        // and consecutive remaps inside one `type` call race the X server's
+        // keymap-change propagation, so non-ASCII chars intermittently drop or
+        // arrive mangled (héllo → hllo, 日本 → 本). Route every non-ASCII char
+        // through `key U<hex>` — one synchronous remap+press+restore per char —
+        // adding Shift only when the char is cased-uppercase, and batch ASCII
+        // runs through `type` as before.
         let runText = "";
         const chunks = [];
         for (const ch of String(text)) {
-          if (ch.codePointAt(0) > 127 && ch !== ch.toLowerCase()) {
+          if (ch.codePointAt(0) > 127) {
             if (runText) { chunks.push(runText); runText = ""; }
             chunks.push(ch);
           } else runText += ch;
         }
         if (runText) chunks.push(runText);
         for (const chunk of chunks) {
-          if (chunk.length === 1 && chunk !== chunk.toLowerCase()) {
+          // Supplementary-plane chars are one code point but length 2; test
+          // the code point, not the string length.
+          if (chunk.codePointAt(0) > 127) {
             const hex = chunk.codePointAt(0).toString(16).toUpperCase().padStart(4, "0");
-            await xdotool(["key", `shift+U${hex}`]);
+            const shift = chunk !== chunk.toLowerCase() ? "shift+" : "";
+            await xdotool(["key", `${shift}U${hex}`]);
           } else {
             await xdotool(["type", "--delay", "12", "--", chunk]);
           }
