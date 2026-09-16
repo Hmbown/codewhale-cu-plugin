@@ -1,5 +1,5 @@
 {
-  "$schema_note": "Parity task suite. Each task is a deterministic script of MCP tool calls against a disposable fixture plus an oracle check defined BEFORE execution. Step forms: {call, args, [expect_error]} | {expect:{path, equals|gte|contains|not_equals}} | {sleep} | {key} (shorthand for call key). Coordinate sugar: target {client:[x,y]} = fixture client-relative point converted to a coordinate target in the latest full-screen raster; {client_zoom:[x,y]} = point inside the latest zoom raster; region {client:[x,y,w,h]} for zoom. {window:'second'} on a client target aims at the fixture's second window instead of the main one. Every task is repeated `repeats` times from a fresh fixture. Steps that need accessibility are marked optional_a11y and count as 'untested' (not failed) when get_app_state cannot see the app.",
+  "$schema_note": "Parity task suite. Each task is a deterministic script of MCP tool calls against a disposable fixture plus an oracle check defined BEFORE execution. Step forms: {call, args, [expect_error]} | {expect:{path, equals|gte|contains|not_equals}} | {sleep} | {key} (shorthand for call key). Coordinate sugar: target {client:[x,y]} = fixture client-relative point converted to a coordinate target in the latest full-screen raster; {client_zoom:[x,y]} = point inside the latest zoom raster; region {client:[x,y,w,h]} for zoom. {window:'second'} on a client target aims at the fixture's second window instead of the main one. target {window_title:'<title>', at:[x,y]} = a point inside a non-fixture window (native dialogs/choosers) found by title on the work display; negative at[] components measure back from the far edge. Every task is repeated `repeats` times from a fresh fixture. Steps that need accessibility are marked optional_a11y and count as 'untested' (not failed) when get_app_state cannot see the app.",
   "repeats": 5,
   "fixtures": {
     "browser": { "kind": "chrome-app", "file": "fixtures/browser.html", "size": [1000, 800], "title_prefix": "CU-FIXTURE " },
@@ -38,6 +38,9 @@
     {
       "id": "browser.dynamic_content", "issue": 2, "fixture": "browser",
       "goal": "Click Load; a premature click during loading must not confirm; after ready, Confirm succeeds.",
+      "known_limitations": {
+        "linux-xvfb": "observed once (2026-09-16): a rep right after a fixture relaunch saw the oracle read the window title before Chromium had published the CU-FIXTURE state (last=null for the whole expect window); later reps are clean. Harness timing on a cold renderer, not a platform gap."
+      },
       "steps": [
         { "call": "screenshot" },
         { "call": "left_click", "args": { "target": { "client": [700, 164] } } },
@@ -76,7 +79,12 @@
         { "call": "screenshot" },
         { "call": "left_click_drag", "args": { "from_target": { "client": [80, 540] }, "to": { "client": [400, 540] } } },
         { "expect": { "path": "dropped", "equals": true } }
-      ]
+      ],
+      "skip": "held-input gestures require a persistent input owner — the desktop helper or the agent --serve route; the direct in-process MCP surface refuses them (input_owner_required) by design so a disconnected client cannot leave buttons held",
+      "known_limitations": {
+        "linux-xvfb": "no Linux desktop helper exists; the local route has no input owner and left_click_drag is refused input_owner_required. The 2026-09-07 receipt predates the input-owner guard — its 5/5 for this row is stale.",
+        "linux-x11": "no Linux desktop helper exists; the local route refuses left_click_drag (input_owner_required). Held input is possible through the ssh agent --serve route, which is a separate surface this suite does not run."
+      }
     },
     {
       "id": "browser.upload", "issue": 2, "fixture": "browser",
@@ -87,9 +95,13 @@
         { "sleep": 1500 },
         { "key": "ctrl+l" },
         { "call": "type", "args": { "text": "${UPLOAD_FILE}" } },
-        { "key": "return" },
+        { "call": "left_click", "args": { "target": { "window_title": "Open File", "at": [-60, -30] } } },
         { "expect": { "path": "upload.text", "equals": "codewhale upload fixture\n" } }
-      ]
+      ],
+      "known_limitations": {
+        "linux-xvfb": "Chromium's GTK file chooser commits a typed location-entry path only via the Open button — Return in the entry closes the dialog with no selection (a stock GTK3 FileChooserDialog commits the same path on Return, so this is Chromium's wrapper). The dialog also carries no AT-SPI elements, so only a window-relative pointer click reaches it.",
+        "linux-x11": "same Chromium chooser behavior: type the path, then click Open; Return in the location entry discards it. On desktops where xdg-desktop-portal supplies the chooser instead, the dialog is a different application entirely and this window_title target will not resolve — record that honestly if it shows."
+      }
     },
     {
       "id": "browser.download", "issue": 2, "fixture": "browser",
@@ -158,9 +170,10 @@
       "steps": [
         { "call": "get_app_state", "args": { "app_ref": { "name": "${BROWSER_APP_NAME}" }, "max_elements": 400 } },
         { "call": "left_click", "args": { "target": { "element_by_label": "Load" } } },
-        { "expect": { "path": "dyn", "equals": "ready" } },
+        { "expect": { "path": "dyn", "equals": "loading" } },
         { "call": "left_click", "args": { "target": { "element_by_label": "Load" } }, "expect_error": "element_stale" },
-        { "expect": { "path": "dyn", "equals": "ready" } }
+        { "sleep": 1000 },
+        { "expect": { "path": "dyn", "equals": "loading" } }
       ]
     },
 
@@ -204,7 +217,12 @@
         { "call": "screenshot" },
         { "call": "left_click_drag", "args": { "from_target": { "client": [480, 180] }, "to": { "client": [720, 180] } } },
         { "expect": { "path": "in_zone", "equals": true } }
-      ]
+      ],
+      "skip": "held-input gestures require a persistent input owner — the desktop helper or the agent --serve route; the direct in-process MCP surface refuses them (input_owner_required) by design so a disconnected client cannot leave buttons held",
+      "known_limitations": {
+        "linux-xvfb": "no Linux desktop helper exists; the local route has no input owner and left_click_drag is refused input_owner_required. The 2026-09-07 receipt predates the input-owner guard — its 5/5 for this row is stale.",
+        "linux-x11": "no Linux desktop helper exists; the local route refuses left_click_drag (input_owner_required). Held input is possible through the ssh agent --serve route, which is a separate surface this suite does not run."
+      }
     },
     {
       "id": "native.modal_dialog", "issue": 3, "fixture": "native",
@@ -224,7 +242,8 @@
         { "expect": { "path": "dialog_result", "equals": "answer" } }
       ],
       "known_limitations": {
-        "linux-x11": "KWin does not give the transient Tk dialog X input focus, so typed text does not reach it; passes on the isolated Xvfb route"
+        "linux-x11": "KWin does not give the transient Tk dialog X input focus, so typed text does not reach it; passes on the isolated Xvfb route",
+        "linux-xvfb": "Tk's simpledialog is toolkit-modal only: it sets WM_TRANSIENT_FOR + grab_set but no _NET_WM_STATE_MODAL, so a stacking WM lets the parent Apply click take X input focus (verified under openbox and metacity). The grab still blocks the click (applied stays empty) but the typed answer then goes to the parent and the dialog stays open. Passes where the WM keeps focus on the transient."
       }
     },
     {
@@ -271,7 +290,7 @@
     },
 
     {
-      "id": "control.permission_denied", "issue": 6, "fixture": null, "server_env": { "DISPLAY": "", "WAYLAND_DISPLAY": "" },
+      "id": "control.permission_denied", "issue": 6, "fixture": null, "server_env": { "DISPLAY": "", "WAYLAND_DISPLAY": "", "XDG_SESSION_TYPE": "" },
       "goal": "With no display session the probe reports an actionable failure and screenshot fails closed (no silent success).",
       "steps": [
         { "call": "request_access", "expect_error_any": true, "expect_message_contains": "DISPLAY" },

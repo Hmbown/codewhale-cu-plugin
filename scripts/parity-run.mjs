@@ -189,6 +189,17 @@ async function resolveTarget(spec, task, repCtx, server) { // repCtx carries the
     const px = toRasterPixels(org.x + x, org.y + y);
     return { target: { type: "coordinate", ...px } };
   }
+  if (spec.window_title) {
+    // A point inside a non-fixture window (native dialogs, choosers) located by
+    // title on the work display. `at` is an offset from the window's top-left;
+    // a negative component measures back from the far edge, so e.g. [-60,-40]
+    // stays on the bottom-right button however the WM sizes the window.
+    const g = desktop.windowGeometry?.(spec.window_title, repCtx);
+    if (!g) return { error: `window "${spec.window_title}" not found on the work display` };
+    const [ox, oy] = spec.at ?? [0, 0];
+    const px = toRasterPixels(g.x + (ox < 0 ? g.w + ox : ox), g.y + (oy < 0 ? g.h + oy : oy));
+    return { target: { type: "coordinate", ...px } };
+  }
   if (spec.element_by_label != null) {
     if (!lastAppState?.elements) {
       return task.optional_a11y ? { skipReason: "get_app_state did not return elements" } : { error: "element_by_label without prior get_app_state" };

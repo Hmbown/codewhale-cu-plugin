@@ -47,6 +47,7 @@ which returns:
 | `killFixture(proc, repCtx)` | stop it and remove its scratch dirs |
 | `prelude(task, repCtx)` | DSL steps to run before the task's own (macOS binds input here); their tool calls are counted separately |
 | `clientOrigin(fixtureKey, { window, repCtx })` | the fixture's content origin in screen points |
+| `windowGeometry(title, repCtx)` | optional — origin and size of a **non-fixture** window (a native dialog or chooser) found by title on the work display; backs the `{window_title, at}` target. A driver without it fails that target with "window not found". |
 | `oracleState(task, repCtx)` | the fixture's state, read **outside** the tool surface |
 | `meta()` | environment facts for `run.json` |
 

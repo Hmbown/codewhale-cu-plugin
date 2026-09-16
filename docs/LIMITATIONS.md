@@ -363,9 +363,14 @@ listing remain available.
   across the agent's own tool calls is 0px on every macOS task (the cursor is
   restored); the foreground is taken on the tasks whose gestures have no
   accessibility equivalent, and the matrix names them.
-- **Tk modal dialogs under KWin (linux-x11 shared).** KWin does not give the
-  transient Tk dialog X input focus, so synthetic key events do not reach it.
-  `native.modal_dialog` fails 5/5 on the shared route and passes 5/5 isolated.
+- **Tk modal dialogs under stacking WMs (linux-x11 shared and isolated).** The
+  Tk `simpledialog` is only toolkit-modal (`WM_TRANSIENT_FOR` + `grab_set`, no
+  `_NET_WM_STATE_MODAL`), so a click on the parent takes X input focus under
+  KWin, openbox and metacity alike; the grab blocks the click's effect but the
+  typed answer then never reaches the dialog. `native.modal_dialog` fails on
+  every stacking WM tested (verified under openbox and metacity on the isolated
+  route, 2026-09-16); the 2026-09-07 isolated receipt's 5/5 predates a window
+  manager on `:99` or ran under different WM conditions — that receipt is stale.
 - **Tk posted menus do not receive synthetic key events.** `native.menu_command`
   was reworked to click the menu item with the pointer; keyboard traversal of
   a posted Tk menu is not achievable with XTEST input on this platform.

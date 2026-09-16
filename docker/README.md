@@ -25,10 +25,11 @@ server with a live accessibility bus. Both are real: the backend runs the same
 `xdotool`, `wmctrl`, `scrot` and `pyatspi` calls it runs anywhere.
 
 It is not evidence for **Wayland** (no driver exists), for a **real login
-session** — `native.modal_dialog` fails under KWin and passes here, so a
-desktop's window manager changes the answer — or for anything the **macOS app**
-holds, which is where permissions, human controls and background input live.
-It also cannot speak to hardware input, multi-monitor or scaled displays.
+session** — `native.modal_dialog` depends on window-manager focus policy and
+fails under the stacking WMs tested here and under KWin — or for anything the
+**macOS app** holds, which is where permissions, human controls and background
+input live. It also cannot speak to hardware input, multi-monitor or scaled
+displays.
 
 Interference is measured, not assumed away. The entrypoint runs a second Xvfb
 on `:0` as the "host" desktop, because the isolated route's claim is that it
@@ -46,19 +47,19 @@ both browsers work; the receipt records which one ran.
 privileges the container does not have. This affects the fixture, not the code
 under test.
 
-## Known non-green rows
+## Resolved non-green rows (2026-09-16)
 
 `docker/run.sh parity` at `--repeats 1` on 2026-09-16 (Chromium 152, Debian 12,
 node 24.21, Xvfb 1600x1200) was **20/27**. Every row below passed 5/5 in
-`parity/results/linux-xvfb-isolated-2026-09-07.json`, so each is either a
-regression since that receipt or a difference between this container and the
-Ubuntu host that produced it — telling those apart is the open work.
+`parity/results/linux-xvfb-isolated-2026-09-07.json`. Each was traced to a
+cause and either fixed or given a committed `known_limitations` reason:
 
-| row | what happens | reads as |
+| row | what happened | resolution |
 |---|---|---|
-| `browser.drag_drop`, `native.drag_square` | `input_owner_required` | **product.** Held-input gestures require a connected desktop helper; Linux has none, so no in-process Linux run can pass them. The 2026-09-07 receipt says "demonstrated" — receipt and code now disagree. |
-| `native.unicode_type` | `Ünïcödé ✓` arrives as `ünïcödé ✓` | **unresolved, and the most interesting.** Case is lost on accented capitals; the keysym trace shows no `Udiaeresis`. Either an xdotool/keymap difference or a real bug in non-ASCII typing. `browser.unicode_type` passes, so it is not simply broken. |
-| `browser.upload` | no file chooser appears | **probably the container.** The task drives Chromium's GTK file dialog, which wants a desktop portal none is installed. |
-| `native.modal_dialog` | dialog stays open | **probably the window manager.** `docs/LIMITATIONS.md` already records this failing under KWin and passing isolated; under openbox here it fails isolated too. |
-| `browser.stale_element` | `dyn` stuck at `loading` | **timing.** The 3s expect window; `browser.form_submit` has been seen both green and red on the same image. Use `--repeats 5`. |
-| `control.permission_denied` | error text lacks `DISPLAY` | **unresolved.** Accessibility still probes `ok` here, so the run takes a different branch than a machine with no session at all. |
+| `browser.drag_drop`, `native.drag_square` | `input_owner_required` | **product.** Held-input gestures require a persistent input owner (desktop helper or `agent --serve`); the in-process route refuses by design. The 2026-09-07 receipt predates the guard. Both tasks are now `skip` with a committed reason. |
+| `native.unicode_type` | `Ünïcödé ✓` arrived as `ünïcödé ✓` | **real bug, fixed.** `xdotool type` remaps a spare keycode for a character absent from the keymap; XKB resolves a lone uppercase alphabetic keysym at level 0 and emits lowercase (`key U00DC` → `ü`, `key shift+U00DC` → `Ü`). The backend now sends `key shift+U<hex>` for non-ASCII uppercase characters. |
+| `browser.upload` | every step "succeeded" but no file arrived | **two real issues, both fixed.** (a) The chooser window had been escaping onto the host `:0` display — dbus-activated services inherit the *bus daemon's* environment, so the isolated route now runs a private session bus under `DISPLAY=:99` (keeps the chooser, and the AT-SPI registry, on the isolated display — the isolation claim the host probe exists to check). (b) Chromium's in-process GTK chooser discards a location-entry path on Return (closes with no selection — a stock `GtkFileChooserDialog` commits it, so this is Chromium's wrapper); the task now types the path then clicks the dialog's Open button via the new `window_title` target. The chooser exposes no AT-SPI elements, so a pointer click is the only drive path. |
+| `native.modal_dialog` | dialog stays open | **real limitation, documented.** The Tk `simpledialog` is toolkit-modal only (`WM_TRANSIENT_FOR` + `grab_set`, no `_NET_WM_STATE_MODAL`), so under openbox *and* metacity the parent-window click takes X input focus; the grab still blocks the click but the typed answer never reaches the dialog. Recorded in `known_limitations["linux-xvfb"]`. |
+| `browser.stale_element` | `dyn` stuck at `loading` | **stale task, fixed.** The fixture holds `loading` until `#dyn` itself is clicked; the shared task wrongly expected `ready`. The corrected steps (already proven in `tasks.darwin.json`) are now in `tasks.json`. |
+| `browser.form_submit` | intermittent | **timing, under observation.** Green in the 2026-09-16 run; watch the repeats-5 receipt. |
+| `control.permission_denied` | error text lacked `DISPLAY` | **environment leak, fixed.** The image sets `XDG_SESSION_TYPE=x11`, which survived the task's `DISPLAY`/`WAYLAND_DISPLAY` blanking and took the `permissions_denied` branch instead of `no_session`. The task now blanks `XDG_SESSION_TYPE` too. |

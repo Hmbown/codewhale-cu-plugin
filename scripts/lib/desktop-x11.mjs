@@ -35,6 +35,13 @@ function browserAppName() {
 let workDisplay = process.env.DISPLAY || ":0";
 let xvfb = null;
 let wm = null;
+// The isolated display gets its own session bus. Dbus-activated services
+// (the AT-SPI registry, xdg-desktop-portal) inherit the daemon's
+// environment, so a bus launched under DISPLAY=:99 keeps their windows on
+// the isolated display — on the shared session bus they inherit the host's
+// DISPLAY and Chromium's portal file chooser maps onto the host desktop.
+let isoBusAddr = null;
+let isoBusPid = null;
 
 // The engine reads meta() after stop(), by which point an isolated run has
 // already torn down its own Xvfb — so sample the display while it is up and
@@ -69,13 +76,21 @@ async function startIsolated() {
       break;
     }
   }
+  const bus = sh("env", ["-u", "DBUS_SESSION_BUS_ADDRESS", "dbus-daemon", "--session", "--fork", "--print-address=1", "--print-pid=1"], { env: { DISPLAY: ":99" } });
+  if (bus.code === 0) {
+    const [addr, pid] = bus.stdout.trim().split("\n");
+    isoBusAddr = addr;
+    isoBusPid = Number(pid);
+  }
 }
 
 // ---------- env shared by fixtures and the server ----------
 function baseEnv() {
   const env = { DISPLAY: workDisplay };
-  // The AT-SPI bus rides the session bus; this shell often lacks the address.
-  if (!process.env.DBUS_SESSION_BUS_ADDRESS && fs.existsSync(`/run/user/${process.getuid()}/bus`)) {
+  if (isoBusAddr) {
+    env.DBUS_SESSION_BUS_ADDRESS = isoBusAddr;
+  } else if (!process.env.DBUS_SESSION_BUS_ADDRESS && fs.existsSync(`/run/user/${process.getuid()}/bus`)) {
+    // The AT-SPI bus rides the session bus; this shell often lacks the address.
     env.DBUS_SESSION_BUS_ADDRESS = `unix:path=/run/user/${process.getuid()}/bus`;
   }
   return env;
@@ -157,6 +172,15 @@ function windowInfo(nameRe, tries = 10) {
     const t0 = Date.now(); while (Date.now() - t0 < 250) {}
   }
   return null;
+}
+
+/** Top-left origin and size of a non-fixture window on the work display
+ *  (native dialogs, file choosers). Used by the `window_title` target. */
+function windowGeometry(titleRe) {
+  const found = windowInfo(titleRe);
+  if (!found) return null;
+  const { abs, wh } = found.info;
+  return { x: abs.x, y: abs.y, w: wh.w, h: wh.h };
 }
 
 function clientOrigin(fixtureKey, { window = "main", repCtx } = {}) {
@@ -329,6 +353,7 @@ async function oracleState(task, repCtx) {
     async start() { if (ISOLATED) await startIsolated(); geometry(); },
     stop() {
       if (wm) try { wm.kill(); } catch {}
+      if (isoBusPid) try { process.kill(isoBusPid); } catch {}
       if (xvfb) try { xvfb.kill(); } catch {}
     },
     baseEnv,
@@ -343,6 +368,7 @@ async function oracleState(task, repCtx) {
     // X11 input follows keyboard focus, so no per-task binding step is needed.
     prelude: () => [],
     clientOrigin,
+    windowGeometry,
     oracleState,
     meta: () => ({
       display: workDisplay,
