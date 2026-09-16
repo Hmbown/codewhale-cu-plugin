@@ -414,7 +414,7 @@ async function runRep(task, repIdx, ctx) {
     await server.stop();
   })();
   activeCleanup = cleanup;
-  const vars = { UPLOAD_FILE: ctx.uploadFile, BROWSER_APP_NAME: "chrome", FIXTURE_PID: null };
+  const vars = { UPLOAD_FILE: ctx.uploadFile, BROWSER_APP_NAME: desktop.browserAppName?.() ?? "chrome", FIXTURE_PID: null };
   let afterLaunch = before;
 
   try {

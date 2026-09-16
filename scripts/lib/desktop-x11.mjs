@@ -14,9 +14,36 @@ export function createDesktop({ parityDir, tasksDoc, isolated }) {
   const ISOLATED = isolated;
 
 const HOST_DISPLAY = ":0"; // where the user's pointer/window live; interference is always measured here
+
+/** The browser the fixture runs in. Google Chrome when it is installed,
+ *  Chromium otherwise — Debian and most distributions ship only the latter,
+ *  and it has no arm64 Google Chrome at all. */
+function browserBinary() {
+  const local = `${HOME}/.local/bin/google-chrome`;
+  if (fs.existsSync(local)) return local;
+  return sh("which", ["google-chrome"]).code === 0 ? "google-chrome" : "chromium";
+}
+
+/** What the accessibility tree calls that browser. Tasks target an application
+ *  by exact name and the content origin is found by walking it, so guessing
+ *  wrong makes every element target and every client coordinate miss. Read it
+ *  from --version rather than the binary name: a distribution may install
+ *  Chromium as google-chrome. */
+function browserAppName() {
+  return /chromium/i.test(sh(browserBinary(), ["--version"]).stdout) ? "Chromium" : "Chrome";
+}
 let workDisplay = process.env.DISPLAY || ":0";
 let xvfb = null;
 let wm = null;
+
+// The engine reads meta() after stop(), by which point an isolated run has
+// already torn down its own Xvfb — so sample the display while it is up and
+// keep the answer, or the receipt records a run with no screen.
+let displayGeometry = "";
+function geometry() {
+  if (!displayGeometry) displayGeometry = xd(workDisplay, ["getdisplaygeometry"]).stdout.trim();
+  return displayGeometry;
+}
 
 function sessionType() {
   if (ISOLATED) return "xvfb";
@@ -171,11 +198,12 @@ function clientOrigin(fixtureKey, { window = "main", repCtx } = {}) {
   return { ...info.abs, winId: id };
 }
 
-const ATSPI_DOC = `import json, pyatspi
+const ATSPI_DOC = `import json, sys, pyatspi
+want = sys.argv[1].casefold()
 d = pyatspi.Registry.getDesktop(0)
 for i in range(d.childCount):
     a = d.getChildAtIndex(i)
-    if a and "chrome" in (a.name or "").lower():
+    if a and (a.name or "").casefold() == want:
         def walk(e, depth=0):
             if depth > 10: return None
             try:
@@ -202,7 +230,7 @@ for i in range(d.childCount):
                     raise SystemExit(0)`;
 
 function atspiDocOrigin() {
-  const r = sh("python3", ["-c", ATSPI_DOC], { env: baseEnv(), timeoutMs: 20_000 });
+  const r = sh("python3", ["-c", ATSPI_DOC, browserAppName()], { env: baseEnv(), timeoutMs: 20_000 });
   try { return JSON.parse(r.stdout.trim().split("\n").pop()); } catch { return null; }
 }
 
@@ -212,7 +240,7 @@ const fixtureProcs = [];
 async function launchFixture(kind, repCtx) {
   const fx = TASKS_DOC.fixtures[kind];
   if (kind === "browser") {
-    const chrome = fs.existsSync(`${HOME}/.local/bin/google-chrome`) ? `${HOME}/.local/bin/google-chrome` : (sh("which", ["google-chrome"]).code === 0 ? "google-chrome" : "chromium");
+    const chrome = browserBinary();
     const udd = fs.mkdtempSync(path.join(os.tmpdir(), "cu-parity-chrome-"));
     fs.mkdirSync(path.join(udd, "Default"), { recursive: true });
     fs.writeFileSync(path.join(udd, "Default", "Preferences"), JSON.stringify({
@@ -298,12 +326,13 @@ async function oracleState(task, repCtx) {
 
   return {
     sessionType,
-    async start() { if (ISOLATED) await startIsolated(); },
+    async start() { if (ISOLATED) await startIsolated(); geometry(); },
     stop() {
       if (wm) try { wm.kill(); } catch {}
       if (xvfb) try { xvfb.kill(); } catch {}
     },
     baseEnv,
+    browserAppName,
     // The Linux runner drives the backend in-process: there is no desktop app
     // holding OS permissions on X11.
     serverEnv: () => ({ CODEWHALE_CU_APP: "off" }),
@@ -317,8 +346,9 @@ async function oracleState(task, repCtx) {
     oracleState,
     meta: () => ({
       display: workDisplay,
-      display_geometry: xd(workDisplay, ["getdisplaygeometry"]).stdout.trim(),
-      chrome: sh(fs.existsSync(`${HOME}/.local/bin/google-chrome`) ? `${HOME}/.local/bin/google-chrome` : "google-chrome", ["--version"]).stdout.trim(),
+      display_geometry: geometry(),
+      chrome: sh(browserBinary(), ["--version"]).stdout.trim(),
+      browser_app_name: browserAppName(),
       python3: sh("python3", ["--version"]).stdout.trim(),
       tk: sh("python3", ["-c", "import tkinter;print(tkinter.TkVersion)"]).stdout.trim(),
     }),

@@ -12,6 +12,13 @@ true so they do not re-derive it.
 | Windows | `src/backends/win32.mjs` | **none** | none |
 | Wayland | `src/backends/linux.mjs` (wayland paths) | none (the X11 driver is X11-only) | none |
 
+**You do not need an Ubuntu machine to start.** `docker/run.sh parity` builds
+a headless Linux desktop — Xvfb, a window manager, the X11 tools, an AT-SPI bus,
+Chromium and Tk — and runs the isolated route in it from anywhere Docker runs.
+What that does and does not qualify is in [docker/README.md](../docker/README.md);
+the short version is that it exercises the real X11 code paths but says nothing
+about Wayland or about a real login session's window manager.
+
 **First job on Ubuntu:** re-run the existing suite and confirm the refactor
 was faithful. `npm run parity` and `npm run parity -- --isolated` should
 reproduce `parity/results/linux-x11-2026-09-06.json` and
