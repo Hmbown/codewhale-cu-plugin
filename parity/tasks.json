@@ -39,7 +39,7 @@
       "id": "browser.dynamic_content", "issue": 2, "fixture": "browser",
       "goal": "Click Load; a premature click during loading must not confirm; after ready, Confirm succeeds.",
       "known_limitations": {
-        "linux-xvfb": "observed once (2026-09-16): a rep right after a fixture relaunch saw the oracle read the window title before Chromium had published the CU-FIXTURE state (last=null for the whole expect window); later reps are clean. Harness timing on a cold renderer, not a platform gap."
+        "linux-xvfb": "reps right after a fixture relaunch raced the oracle: the window mapped before Chromium published the CU-FIXTURE title state, so the first expect sampled nulls (observed 2026-09-16 as 1/5 then 2/5 fails across two runs). The X11 driver now waits for a readable oracle state before launchFixture returns; kept as a note on what the wait is for."
       },
       "steps": [
         { "call": "screenshot" },

@@ -280,6 +280,13 @@ async function launchFixture(kind, repCtx) {
     const id = findWindow(fx.title_prefix, 15_000, proc.pid);
     if (!id) throw new Error("browser fixture window did not appear");
     repCtx.winId = id;
+    // The window maps before the page's first CU-FIXTURE title write; a task
+    // that samples the oracle in that gap sees nulls the run counts as fails.
+    const stateDeadline = Date.now() + 15_000;
+    while (Date.now() < stateDeadline) {
+      if (await oracleState({ fixture: "browser" }, repCtx)) break;
+      await new Promise((r) => setTimeout(r, 200));
+    }
     // Wait (bounded) for the renderer's a11y tree so the content origin can
     // be measured via AT-SPI; fall back to the window origin if it never shows.
     const deadline = Date.now() + 8_000;
