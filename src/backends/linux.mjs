@@ -614,6 +614,12 @@ print(json.dumps({"found": True, "reason": None, "element": {
             const hex = chunk.codePointAt(0).toString(16).toUpperCase().padStart(4, "0");
             const shift = chunk !== chunk.toLowerCase() ? "shift+" : "";
             await xdotool(["key", `${shift}U${hex}`]);
+            // Each temp remap restores the keymap as soon as the event is
+            // queued; a lagging app can then read the press against the
+            // restored map and drop it. A short settle narrows that window.
+            // Under heavy host saturation XTEST drops remain possible — that
+            // residual is documented in the suite's known_limitations.
+            await new Promise((r) => setTimeout(r, 30));
           } else {
             await xdotool(["type", "--delay", "12", "--", chunk]);
           }
