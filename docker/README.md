@@ -49,17 +49,27 @@ under test.
 
 ## Resolved non-green rows (2026-09-16)
 
-`docker/run.sh parity` at `--repeats 1` on 2026-09-16 (Chromium 152, Debian 12,
-node 24.21, Xvfb 1600x1200) was **20/27**. Every row below passed 5/5 in
-`parity/results/linux-xvfb-isolated-2026-09-07.json`. Each was traced to a
-cause and either fixed or given a committed `known_limitations` reason:
+`docker/run.sh parity --repeats 5` on 2026-09-16 (Chromium 152, Debian 12,
+node 24.21, Xvfb 1600x1200) is **25/27 demonstrated**: every row green except
+`native.modal_dialog` (fails, documented below) and the two held-input rows
+(skipped, documented). Receipt: `parity/results/linux-xvfb-isolated-2026-09-16.json`
+on a clean tree. Each originally non-green row was traced to a cause and
+either fixed or given a committed `known_limitations` reason:
 
 | row | what happened | resolution |
 |---|---|---|
 | `browser.drag_drop`, `native.drag_square` | `input_owner_required` | **product.** Held-input gestures require a persistent input owner (desktop helper or `agent --serve`); the in-process route refuses by design. The 2026-09-07 receipt predates the guard. Both tasks are now `skip` with a committed reason. |
-| `native.unicode_type` | `Ünïcödé ✓` arrived as `ünïcödé ✓` | **real bug, fixed.** `xdotool type` remaps a spare keycode for a character absent from the keymap; XKB resolves a lone uppercase alphabetic keysym at level 0 and emits lowercase (`key U00DC` → `ü`, `key shift+U00DC` → `Ü`). The backend now sends `key shift+U<hex>` for non-ASCII uppercase characters. |
+| `native.unicode_type` | `Ünïcödé ✓` arrived as `ünïcödé ✓` | **real bug, fixed.** `xdotool type` remaps a spare keycode for a character absent from the keymap; XKB resolves a lone uppercase alphabetic keysym at level 0 and emits lowercase (`key U00DC` → `ü`, `key shift+U00DC` → `Ü`). The backend now sends every non-ASCII code point via `key U<hex>` (adding `shift+` for cased capitals) with a short settle between remapped chars. |
 | `browser.upload` | every step "succeeded" but no file arrived | **two real issues, both fixed.** (a) The chooser window had been escaping onto the host `:0` display — dbus-activated services inherit the *bus daemon's* environment, so the isolated route now runs a private session bus under `DISPLAY=:99` (keeps the chooser, and the AT-SPI registry, on the isolated display — the isolation claim the host probe exists to check). (b) Chromium's in-process GTK chooser discards a location-entry path on Return (closes with no selection — a stock `GtkFileChooserDialog` commits it, so this is Chromium's wrapper); the task now types the path then clicks the dialog's Open button via the new `window_title` target. The chooser exposes no AT-SPI elements, so a pointer click is the only drive path. |
 | `native.modal_dialog` | dialog stays open | **real limitation, documented.** The Tk `simpledialog` is toolkit-modal only (`WM_TRANSIENT_FOR` + `grab_set`, no `_NET_WM_STATE_MODAL`), so under openbox *and* metacity the parent-window click takes X input focus; the grab still blocks the click but the typed answer never reaches the dialog. Recorded in `known_limitations["linux-xvfb"]`. |
 | `browser.stale_element` | `dyn` stuck at `loading` | **stale task, fixed.** The fixture holds `loading` until `#dyn` itself is clicked; the shared task wrongly expected `ready`. The corrected steps (already proven in `tasks.darwin.json`) are now in `tasks.json`. |
-| `browser.form_submit` | intermittent | **timing, under observation.** Green in the 2026-09-16 run; watch the repeats-5 receipt. |
+| `browser.form_submit` | intermittent | **resolved.** 5/5 in the repeats-5 receipt; the flake was fixture-launch/oracle timing, now gated on a readable `CU-FIXTURE` state. |
 | `control.permission_denied` | error text lacked `DISPLAY` | **environment leak, fixed.** The image sets `XDG_SESSION_TYPE=x11`, which survived the task's `DISPLAY`/`WAYLAND_DISPLAY` blanking and took the `permissions_denied` branch instead of `no_session`. The task now blanks `XDG_SESSION_TYPE` too. |
+
+Two harness-level defects surfaced only at `--repeats 5`: Chromium children
+`setpgid` into their own groups inside the fixture's session, so a group kill
+left live orphans that accumulated across 135 launches (the driver now sweeps
+the fixture's whole session); and a `launchFixture` throw after spawn leaked
+the family entirely (it is killed before the throw now). A rep that fails in
+runner setup — fixture never ran the task — is retried once and the receipt
+records `launch_retry`.

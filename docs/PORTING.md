@@ -8,7 +8,7 @@ true so they do not re-derive it.
 | platform | backend | parity driver | receipts |
 |---|---|---|---|
 | macOS (Aqua) | `src/backends/darwin.mjs` + `darwin-accessibility.m` | `scripts/lib/desktop-darwin.mjs` | 27 tasks × 5 repeats, 24 demonstrated — `parity/results/darwin-aqua-2026-09-07.json` |
-| Linux (X11) | `src/backends/linux.mjs` | `scripts/lib/desktop-x11.mjs` | 27 tasks × 5 repeats, 26 demonstrated — but recorded **before** the runner was split into engine + drivers, and not re-run since |
+| Linux (X11) | `src/backends/linux.mjs` | `scripts/lib/desktop-x11.mjs` | 27 tasks × 5 repeats, 25 demonstrated + 2 documented skips on the isolated surface — `parity/results/linux-xvfb-isolated-2026-09-16.json`; the 2026-09-07 receipts predate the engine/driver split and are stale |
 | Windows | `src/backends/win32.mjs` | `scripts/lib/desktop-win32.mjs` | none yet — driver exists but needs a real Windows desktop run (see below) |
 | Wayland | `src/backends/linux.mjs` (wayland paths) | none (the X11 driver is X11-only) | none |
 
@@ -19,12 +19,14 @@ What that does and does not qualify is in [docker/README.md](../docker/README.md
 the short version is that it exercises the real X11 code paths but says nothing
 about Wayland or about a real login session's window manager.
 
-**First job on Ubuntu:** re-run the existing suite and confirm the refactor
-was faithful. `npm run parity` and `npm run parity -- --isolated` should
-reproduce `parity/results/linux-x11-2026-09-06.json` and
-`parity/results/linux-xvfb-isolated-2026-09-07.json`. The X11 driver is a
-verbatim move of the code those runs used; nothing in it was rewritten. If a
-row moves, the refactor is where to look first.
+**First job on Ubuntu:** run the existing suite on a real login session.
+`npm run parity` on a desktop X11 session should reproduce the container
+result — 25 demonstrated, 2 documented skips, `native.modal_dialog` failing
+under the toolkit-modal limitation. The isolated-surface receipt is fresh
+(`parity/results/linux-xvfb-isolated-2026-09-16.json`); the older
+`linux-x11-2026-09-06.json` shared-session receipt still predates the
+engine/driver split. If a row moves, look at WM behavior first — the
+container runs openbox, real desktops differ.
 
 **First job on Windows:** the driver exists (`scripts/lib/desktop-win32.mjs`)
 but has no receipts. It needs a real interactive Windows desktop — a Windows
