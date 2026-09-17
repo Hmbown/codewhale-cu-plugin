@@ -41,6 +41,19 @@ Also fixed: `set_value`'s web replacement path sent cmd+a twice — `bg_key`
 posts a complete press per call, so the separate down/up calls were
 redundant (harmless for select-all, but two front leases).
 
+And the preview panel:
+
+- **Borderless.** The watch panel drops its titlebar and edge chrome — it
+  floats as the captured window with rounded corners, still draggable by
+  its background, still non-activating. The "Codewhale · app · mode"
+  caption is drawn inside the view instead of the titlebar. Close it with
+  `preview(enabled:false)` or the control panel.
+- **The user's real cursor is drawn too.** Each refresh now passes the
+  hardware pointer position through `preview_notify`; the panel draws a
+  white "you" arrow next to the cyan "Codewhale" agent arrow, both in the
+  same window-relative space, so a person working alongside the agent can
+  see where their cursor actually is relative to the controlled window.
+
 Verification: `npm test` 268 pass / 0 fail / 15 platform-skipped (8 new
 regression tests); `node scripts/check-receipts.mjs docs parity/results`
 clean; live MCP dogfood against the installed 0.6.0 helper (direct mode,

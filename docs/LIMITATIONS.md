@@ -44,9 +44,12 @@ Two honesty fixes on the action path:
   the control's own value.
 - **The preview panel is on by default** while an app is bound: each action
   refreshes the captured window and draws the agent cursor at the action's
-  target — including element actions, not just pointer gestures. It is a
-  nonactivating panel; it never moves the real cursor. `preview(enabled:false)`
-  mutes it for the session.
+  target — including element actions, not just pointer gestures. Since
+  0.6.1 the panel is borderless (draggable by its background, caption
+  drawn inside) and also draws the user's real hardware cursor as a white
+  "you" arrow alongside the cyan agent arrow, in the same window-relative
+  space. It is a nonactivating panel; it never moves the real cursor.
+  `preview(enabled:false)` mutes it for the session.
 
 Live spot check (macOS 26.1, arm64, 2026-09-15): real Chrome on a long
 ChatGPT page observed ~750 elements to depth 24 including the composer

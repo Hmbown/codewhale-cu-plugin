@@ -210,7 +210,13 @@ export function create({ exec }) {
     if (r.code !== 0) throw new ExecError(`background preview capture failed: ${r.stderr}`);
     fs.renameSync(temp, file);
     const p = state.pointer;
-    await native("preview_notify", { enabled: true, show, title: `Codewhale · ${win.name} · ${state.foregroundInput ? "Shared desktop control" : "Background app control"}`, x: p ? (p.x-win.points.x)/win.points.w : -1, y: p ? (p.y-win.points.y)/win.points.h : -1 });
+    // The user's own hardware cursor goes on the preview too, so the panel
+    // shows both pointers in the same window-relative space.
+    let userCursor = null;
+    try { userCursor = await native("cursor_position"); } catch {}
+    await native("preview_notify", { enabled: true, show, title: `Codewhale · ${win.name} · ${state.foregroundInput ? "Shared desktop control" : "Background app control"}`, x: p ? (p.x-win.points.x)/win.points.w : -1, y: p ? (p.y-win.points.y)/win.points.h : -1,
+      user_x: userCursor && Number.isFinite(userCursor.x) ? (userCursor.x-win.points.x)/win.points.w : -1,
+      user_y: userCursor && Number.isFinite(userCursor.y) ? (userCursor.y-win.points.y)/win.points.h : -1 });
     return { enabled: true, file, app: state.inputApp, pointer: p };
   }
 
