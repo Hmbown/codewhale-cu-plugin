@@ -192,7 +192,11 @@ static BOOL cuBgLeaseBegin(NSRunningApplication *inputApp, uint32_t winNum, BOOL
     return NO;
   }
   cuCheckCancelled();
-  if(swap) {
+  if(swap && !cuFrontmostIsPid(lease->targetPid)) {
+    // An already-frontmost target needs no swap: the record already addresses
+    // the window, and setting an app front of itself changes nothing. Skipping
+    // it keeps receipts truthful (front_lease:false) and avoids a restore
+    // attempt for focus that was never borrowed.
     NSRunningApplication *frontApp = NSWorkspace.sharedWorkspace.frontmostApplication;
     lease->frontPid = frontApp.processIdentifier;
     if(cuGetFront(&lease->frontPSN) != 0 || cuSetFront(&lease->targetPSN, 0, 0x400) != 0) {
@@ -211,17 +215,19 @@ static BOOL cuBgLeaseBegin(NSRunningApplication *inputApp, uint32_t winNum, BOOL
   usleep(30000);
   return YES;
 }
-static void cuBgLeaseEnd(cuBgLease *lease) {
-  if(!lease->swapped) return;
+static BOOL cuBgLeaseEnd(cuBgLease *lease) {
+  if(!lease->swapped) return YES; // nothing was borrowed
   cuSetFront(&lease->frontPSN, 0, 0x400);
   // NSWorkspace's frontmost view is stale in a one-shot helper; the SLS
   // front-process read is authoritative. Re-assert through AX while the
-  // lease is still visible.
-  for(int i = 0; i < 10; i++) {
+  // lease is still visible. The outcome is reported, not assumed: a failed
+  // restore means the person's next keystrokes land in the wrong app.
+  for(int i = 0; i < 20; i++) {
     if(!cuFrontmostIsPid(lease->targetPid)) break;
     axActivate(lease->frontPid);
     usleep(50000);
   }
+  return !cuFrontmostIsPid(lease->targetPid);
 }
 static BOOL cuFrontmostIsPid(pid_t pid) {
   ProcessSerialNumber front, want;
@@ -367,6 +373,7 @@ static NSDictionary *cuBgPointer(NSRunningApplication *inputApp, NSDictionary *a
   if(!cuBgLeaseBegin(inputApp, winNum, YES, &lease, &why))
     @throw [NSException exceptionWithName:@"bg_dispatch_unavailable" reason:why userInfo:nil];
   BOOL menuLeaseHeld = NO;
+  BOOL restored = YES;
   @try {
     for(NSDictionary *step in steps) {
       cuCheckCancelled();
@@ -411,10 +418,11 @@ static NSDictionary *cuBgPointer(NSRunningApplication *inputApp, NSDictionary *a
     }
   } @finally {
     if(menuLeaseHeld) cuFrontLeaseHold(&lease);
-    else cuBgLeaseEnd(&lease);
+    else restored = cuBgLeaseEnd(&lease);
   }
   NSMutableDictionary *receipt = [@{@"action_sent":@YES, @"strategy":@"window-record", @"pointer_moved":@NO,
            @"front_lease":@(lease.swapped), @"window":@{@"id":@(winNum)}} mutableCopy];
+  if(lease.swapped) receipt[@"front_restored"] = @(restored);
   if(menuLeaseHeld) receipt[@"menu_lease_held"] = @YES;
   return receipt;
 }
@@ -847,6 +855,7 @@ static NSDictionary *cuType(NSDictionary *args, NSRunningApplication *inputApp, 
   }
   cuBgLease lease;
   BOOL leasing = NO;
+  BOOL typeRestored = YES;
   if(needsRecord && typeWin) {
     NSString *why = nil;
     leasing = cuBgLeaseBegin(inputApp, typeWin, YES, &lease, &why);
@@ -866,7 +875,7 @@ static NSDictionary *cuType(NSDictionary *args, NSRunningApplication *inputApp, 
       }
       i=NSMaxRange(range); usleep(10000);
     }
-  } @finally { if(leasing) cuBgLeaseEnd(&lease); }
+  } @finally { if(leasing) typeRestored = cuBgLeaseEnd(&lease); }
   if(cuCancelled) @throw [NSException exceptionWithName:@"cancelled" reason:@"computer request cancelled" userInfo:nil];
   NSString *after=nil;
   if(focused && !secure) {
@@ -883,6 +892,7 @@ static NSDictionary *cuType(NSDictionary *args, NSRunningApplication *inputApp, 
                                   @"keyboard_delivery":semantic?@"accessibility":[args[@"foreground_input"] boolValue]?@"foreground-guarded":leasing?@"window-record":@"process",
                                   @"verified":@(verified),@"focused_role":role?:[NSNull null]} mutableCopy];
   if(leasing) receipt[@"window_focused"]=@YES;
+  if(lease.swapped) receipt[@"front_restored"]=@(typeRestored);
   if(!verified) receipt[@"verification_required"]=@"screenshot";
   return receipt;
 }
@@ -984,8 +994,11 @@ static id execute(NSDictionary *p) {
   if([tool isEqual:@"permissions"]) return @{@"trusted":@(AXIsProcessTrusted())};
   if([tool isEqual:@"list_apps"]) {
     NSMutableArray *apps=[NSMutableArray array];
-    for(NSRunningApplication *a in NSWorkspace.sharedWorkspace.runningApplications)
-      [apps addObject:@{@"name":a.localizedName?:@"",@"pid":@(a.processIdentifier),@"bundle_id":a.bundleIdentifier?:@"",@"frontmost":@(a.active),@"hidden":@(a.hidden)}];
+    for(NSRunningApplication *a in NSWorkspace.sharedWorkspace.runningApplications) {
+      NSInteger policy = a.activationPolicy;
+      NSString *policyName = (policy >= 0 && policy <= 2) ? @[@"regular",@"accessory",@"prohibited"][policy] : @"unknown";
+      [apps addObject:@{@"name":a.localizedName?:@"",@"pid":@(a.processIdentifier),@"bundle_id":a.bundleIdentifier?:@"",@"frontmost":@(a.active),@"hidden":@(a.hidden),@"activation_policy":policyName}];
+    }
     return @{@"apps":apps};
   }
   if([tool isEqual:@"displays"]) {
@@ -1087,6 +1100,7 @@ static id execute(NSDictionary *p) {
     NSString *why = nil;
     if(!cuBgLeaseBegin(inputApp, keyWin, YES, &lease, &why))
       @throw [NSException exceptionWithName:@"bg_dispatch_unavailable" reason:why userInfo:nil];
+    BOOL keyRestored = YES;
     @try {
       for(int down = 1; down >= 0; down--) {
         CGEventRef event = CGEventCreateKeyboardEvent(NULL, [args[@"code"] unsignedShortValue], down ? true : false);
@@ -1095,8 +1109,10 @@ static id execute(NSDictionary *p) {
         CFRelease(event);
         usleep(30000);
       }
-    } @finally { cuBgLeaseEnd(&lease); }
-    return @{@"action_sent":@YES, @"strategy":@"window-record", @"keyboard_delivery":@"window-record", @"front_lease":@YES};
+    } @finally { keyRestored = cuBgLeaseEnd(&lease); }
+    NSMutableDictionary *receipt = [@{@"action_sent":@YES, @"strategy":@"window-record", @"keyboard_delivery":@"window-record", @"front_lease":@(lease.swapped)} mutableCopy];
+    if(lease.swapped) receipt[@"front_restored"] = @(keyRestored);
+    return receipt;
   }
   if([tool isEqual:@"mouse_event"]) {
     CGPoint p=CGPointMake([args[@"x"] doubleValue],[args[@"y"] doubleValue]);

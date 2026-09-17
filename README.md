@@ -61,7 +61,7 @@ existing Engine authority before the model can use it.
 
 ## Verification status
 
-**Source (this snapshot).** `npm test` on macOS: 260 passed, 0 failed,
+**Source (this snapshot).** `npm test` on macOS: 278 passed, 0 failed,
 15 platform skips. The GitHub Actions workflow runs the same suite plus the
 receipt hygiene check on macOS and Ubuntu runners. Source tests exercise the
 protocol, routing, session and injected-runner paths; they perform no native
@@ -377,7 +377,14 @@ with an upgrade error instead of sharing another client's input state.
   down/up, scroll (4 directions).
 - **Keyboard & text** — `type` (unicode), `key` (chords + repeat),
   `hold_key`, `set_value` (semantic, background-safe), `select_text`,
-  `perform_action` (element's own actions: AXPress / UIA Invoke / AT-SPI / uitest).
+  `perform_action` (element's own actions: AXPress / UIA Invoke / AT-SPI / uitest),
+  `invoke_menu` (menu items by title path; accessibility only — no key events
+  or focus lease; window-targeted items may need a key window).
+- **Guidance & policy** — the operating skill ships as MCP resources
+  (`skills/list`, `skills/get`, `resources/read` of `skill://codewhale-cu/…`,
+  sha256 manifest) and as the `skills/computer-use/` pack in this repo; every
+  tool advertises MCP annotations (readOnly / destructive / idempotent /
+  openWorld) for host approval and sandbox policy.
 - **Recording** — `recording_start/stop/status/list` (see below).
 - **Computers** — `computer_list`, `computer_switch`, `computer_register`
   (ssh agent auto-push), `computer_remove`.

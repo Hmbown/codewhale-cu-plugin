@@ -1,5 +1,49 @@
 # Release notes
 
+## 0.6.2 — context diet, focus accounting, and a menu route
+
+- **The skill travels with the server.** The existing operating guide gains
+  `references/quick-reference.md` (every tool on one page, plus recipes) and
+  `references/refusal-codes.md` (fail-closed codes and the move that fixes
+  each), and the whole pack is now served as MCP resources: `resources/list`,
+  `resources/read`, and `skills/list` / `skills/get` with a sha256 manifest
+  (`skill://codewhale-cu/SKILL.md`). Guidance is read once per session
+  instead of being re-stated in receipts.
+- **Tools advertise MCP annotations** (`readOnlyHint`, `destructiveHint`,
+  `idempotentHint`, `openWorldHint`) so hosts can build approval and sandbox
+  policy without guessing from prose.
+- **`list_apps` defaults to regular apps.** The 22 KB process soup (XPC
+  helpers, menu-bar extras, CLI children) is now opt-in with `all:true`; the
+  default list is the apps a person would name. A helper that predates the
+  new `activation_policy` field still returns the full list rather than
+  hiding everything.
+- **`invoke_menu` activates menu items by title path through accessibility
+  alone** — no key events, no focus lease. App-level commands (New, Save,
+  Quit) are exact; window-targeted items (Close) can validate against a key
+  window a background app does not have and legitimately no-op, so the
+  reference points those at the window's close-button element. Disabled items
+  are refused (`menu_item_disabled`) instead of pressed; exact titles only,
+  and each level is polled because menus expose items only while open.
+- **Focus accounting is honest.** A window-record lease is skipped entirely
+  when the target app is already frontmost (the swap would be a no-op);
+  leases that *are* taken report `front_restored`, and a failed restore says
+  so in the receipt — the person's menu bar must never silently stay where
+  they did not put it. Restore re-asserts for up to one second.
+- **The chord hedge note is gone.** A process-delivered chord now says what
+  happened (`process delivery (no focus lease was taken)`) instead of
+  speculating about failure.
+- **Stale helpers are named.** When the running helper reports a different
+  version than the plugin, `request_access` marks `app.stale` and says which
+  restart fixes it — instead of letting an agent debug a build that is not
+  running.
+- **Native refusals map to stable codes** (`window_ambiguous`,
+  `window_not_capturable`, `window_target_not_found`, `app_not_found`) for
+  programmatic branching; the `get_app_state` note is shorter.
+
+Verification: `npm test` 293 tests — 278 pass / 0 fail / 15 platform-skipped
+(10 new in `tests/mcp-skills.test.mjs`); native helper compiles clean under
+`-DCU_TEST=1`.
+
 ## 0.6.1 — concurrent-use hardening and honest chord delivery
 
 Dogfooding while a person used the same Mac surfaced four defects; all are

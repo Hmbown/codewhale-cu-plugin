@@ -41,7 +41,11 @@ Observe once, act once, then verify.
    Computer Use desktop app is doing the work (grants belong to it);
    `"direct"` means the hosting app or terminal is. Follow the actual
    `appHint`: bundled Codewhale builds already carry their native helper.
-2. `list_apps` shows running apps only. If the user names an app that is
+   `app.stale:true` means the running helper reports an older version than the
+   plugin — tell the user to restart the Codewhale Computer Use app before
+   debugging any behavior.
+2. `list_apps` shows user-facing apps only; pass `all:true` to include
+   menu-bar helpers and background processes. If the user names an app that is
    absent, call `open_application` once with the original user-provided name,
    copied character-for-character — including case, spaces, punctuation, and
    suffixes such as `app` or `.exe`. Do not translate, localize, normalize,
@@ -144,7 +148,12 @@ Observe once, act once, then verify.
     AX scrollbar — the window-record route delivers genuine mouse/wheel
     events to the bound app's window: the cursor never moves, and a momentary
     no-raise front-process lease is taken and restored (every receipt says
-    `strategy:"window-record"`, `pointer_moved:false`, `front_lease:true`).
+    `strategy:"window-record"`, `pointer_moved:false`). Lease accounting is
+    explicit: `front_lease:true` plus `front_restored` when a lease was taken
+    (a failed restore is stated in the receipt — report it to the user), and
+    `front_lease:false` when the target was already frontmost and no lease was
+    needed. `key` chords that had no window to route through fall back to
+    process delivery and say so instead of pretending.
     Only hover and held-button tools still need `activate:true`.
   - Shared-desktop gestures and foreground keyboard delivery require explicit
     user authorization for exclusive desktop use, followed by
@@ -156,6 +165,13 @@ Observe once, act once, then verify.
     when the shared-desktop step ends.
   - Menus appear in `get_app_state`. Use the advertised action (often
     `AXPress` to open a menu, then `AXPick` on its item), then observe again.
+    `invoke_menu {path:["File","New"]}` does that traversal in one call,
+    through accessibility alone — no key events, no focus lease. App-level
+    commands (New, Save, Quit) are reliable without a key window;
+    window-targeted items (Close) can validate against a key window the
+    background app does not have and legitimately no-op — close windows
+    through their close-button element instead. Exact titles only; a present
+    but disabled item is refused (`menu_item_disabled`) rather than pressed.
   - A pointer gesture is refused when another application's window covers the
     point; it names the owner. Observe again and use the selected control's
     accessibility action, or wait for authorized exclusive desktop use. Do not
@@ -226,3 +242,11 @@ paths. Screenshots land in the same directory.
   otherwise show the registry and remind that any tool accepts `computer`.
 - **Status** — `computer_list`, then `request_access` per computer; call out
   anything that will fail closed with the exact install hint from the receipt.
+
+## References
+
+- `references/quick-reference.md` — every tool on one page, plus the common
+  recipes (type into a field, close a window without borrowing focus,
+  switch apps mid-task).
+- `references/refusal-codes.md` — the fail-closed codes, what each means,
+  and the move that fixes it.

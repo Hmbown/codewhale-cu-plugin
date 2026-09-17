@@ -96,8 +96,8 @@ export const TOOLS = [
   },
   {
     name: "list_apps",
-    description: "List running applications (name, pid, bundle id). If the user names an app that is absent, use open_application once with the exact user-provided name.",
-    inputSchema: { type: "object", properties: { computer: computerParam }, additionalProperties: false },
+    description: "List running applications (name, pid, bundle id, frontmost). Defaults to regular user-facing apps; pass all:true to include background agents and helpers (menu-bar extras, XPC services, CLI processes).",
+    inputSchema: { type: "object", properties: { all: { type: "boolean", description: "Include accessory/background processes, not just regular apps. Use when looking for a menu-bar or helper process; keep the default for picking an app to control." }, computer: computerParam }, additionalProperties: false },
   },
   {
     name: "list_windows",
@@ -318,6 +318,17 @@ export const TOOLS = [
     name: "perform_action", description: "Invoke a named accessibility action on an element (e.g. AXPress on macOS, Invoke on Windows/UIA, click on harmony). Only actions the element advertises. Element targets only.",
     inputSchema: { type: "object", required: ["target", "action"], properties: { target: elementTargetSchema, action: { type: "string" }, computer: computerParam }, additionalProperties: false },
   },
+  {
+    name: "invoke_menu", description: "macOS: invoke an application menu item by title path (e.g. [\"File\",\"New\"]). Runs through accessibility with no focus lease and no key events — prefer this over cmd-key chords for app commands (New, Save, Quit and menu-only actions). App-level commands work without a key window; window-targeted items (Close) can validate against the app's key window and may no-op in the background — prefer the window's close-button element for those. Acts on the app bound with open_application. Verify the effect (list_windows / get_app_state) before reporting success.",
+    inputSchema: {
+      type: "object", required: ["path"],
+      properties: {
+        path: { type: "array", minItems: 1, maxItems: 3, items: { type: "string", minLength: 1 }, description: "Menu titles from the menu bar inward, e.g. [\"File\",\"Close Window\"]. Exact titles as shown, including an ellipsis when the app shows one. Application menus (the second menu bar group named after the app) work too." },
+        computer: computerParam,
+      },
+      additionalProperties: false,
+    },
+  },
   // ---- clipboard / runtime ----
   {
     name: "read_clipboard", description: "Read the system clipboard as UTF-8 text.",
@@ -395,7 +406,7 @@ export const REMOTE_TOOLS = new Set([
   "open_application", "get_app_state", "resolve_element", "screenshot", "zoom",
   "left_click", "double_click", "triple_click", "right_click", "middle_click",
   "mouse_move", "left_click_drag", "left_mouse_down", "left_mouse_up", "scroll",
-  "type", "key", "hold_key", "set_value", "focus", "get_value", "select_text", "perform_action",
+  "type", "key", "hold_key", "set_value", "focus", "get_value", "select_text", "perform_action", "invoke_menu",
   "read_clipboard", "write_clipboard", "cursor_position",
   "recordingStart", "recordingStop", "recordingStatus", "recordingList",
 ]);
@@ -410,3 +421,47 @@ export const BACKEND_METHOD = Object.fromEntries(
       recording_list: "recordingList",
     }[t.name] ?? t.name]),
 );
+
+// ---------- MCP tool annotations ----------
+// Host-facing hints for approval and sandbox policy (MCP spec `annotations`).
+// Hints describe the tool's design; they are not runtime gates. Observation
+// tools read local state; `openWorld` is true when a tool acts on applications
+// or computers outside this process; `destructive` marks tools that change what
+// the user sees or holds (input, clipboard, registrations).
+const READ_ONLY_ANNOTATION = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false };
+const INPUT_ANNOTATION = { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true };
+const TOOL_ANNOTATIONS = {
+  // Observation — reads only.
+  request_access: READ_ONLY_ANNOTATION, computer_list: READ_ONLY_ANNOTATION, list_displays: READ_ONLY_ANNOTATION,
+  list_apps: READ_ONLY_ANNOTATION, list_windows: READ_ONLY_ANNOTATION, wait_for: READ_ONLY_ANNOTATION,
+  get_app_state: READ_ONLY_ANNOTATION, find_elements: READ_ONLY_ANNOTATION, get_value: READ_ONLY_ANNOTATION,
+  screenshot: READ_ONLY_ANNOTATION, zoom: READ_ONLY_ANNOTATION, cursor_position: READ_ONLY_ANNOTATION,
+  read_clipboard: READ_ONLY_ANNOTATION, recording_list: READ_ONLY_ANNOTATION, recording_status: READ_ONLY_ANNOTATION,
+  wait: READ_ONLY_ANNOTATION,
+  // Session controls — local state, not the user's apps.
+  preview: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  stop_computer_control: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  switch_display: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  recording_start: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+  recording_stop: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  // Computer registry — touches other machines.
+  computer_switch: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  computer_register: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  computer_remove: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
+  open_application: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  // Input — changes what the user sees.
+  left_click: INPUT_ANNOTATION, double_click: INPUT_ANNOTATION, triple_click: INPUT_ANNOTATION,
+  right_click: INPUT_ANNOTATION, middle_click: INPUT_ANNOTATION, left_click_drag: INPUT_ANNOTATION,
+  left_mouse_down: INPUT_ANNOTATION, left_mouse_up: INPUT_ANNOTATION,
+  type: INPUT_ANNOTATION, key: INPUT_ANNOTATION, hold_key: INPUT_ANNOTATION, invoke_menu: INPUT_ANNOTATION,
+  perform_action: INPUT_ANNOTATION, run_actions: INPUT_ANNOTATION,
+  mouse_move: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
+  scroll: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
+  set_value: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
+  focus: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
+  select_text: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
+  write_clipboard: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
+};
+for (const tool of TOOLS) {
+  tool.annotations = TOOL_ANNOTATIONS[tool.name] ?? INPUT_ANNOTATION;
+}

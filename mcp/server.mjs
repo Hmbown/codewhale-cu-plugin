@@ -4,6 +4,7 @@
 // computer switching as a default: every tool accepts `computer`, and using a
 // computer id switches the sticky active computer.
 import fs from "node:fs";
+import crypto from "node:crypto";
 import * as registry from "../src/registry.mjs";
 import { backendFor, installRemoteAgent, executorFor, closeAppSession, routeFingerprint, closeSshChannel } from "../src/transport.mjs";
 import { TOOLS, TOOL_NAMES, REQUIRED_ARGS, ELEMENT_ONLY_TARGET, READ_ONLY_TOOLS, REMOTE_TOOLS, BACKEND_METHOD } from "../src/tools.mjs";
@@ -368,7 +369,7 @@ function observeState(computer, app_ref, result, args = {}) {
     truncated: filtered.truncated,
     note: ephemeral
       ? "Ephemeral poll: elements are not bound to a state_id."
-      : "Target observed elements with {type:'element', index}; the index addresses this latest observation's cached tree, including rows omitted from this page. Pin an older observation with state_id. Filter with query/role/limit/offset instead of requesting a larger dump. Missing labels or values are unknown; do not guess.",
+      : "Indices target this observation's cached tree (including rows not shown); pin it with state_id, or re-observe after the app changes.",
   };
   if (compact && data.ocr && args.include_ocr !== true) delete data.ocr;
   return fitStatePayload(data, STATE_CHAR_BUDGET);
@@ -674,6 +675,14 @@ async function callTool(params) {
         data = observeState(computer, wireArgs.app_ref, data, args);
       }
       if (backendMethod === "probe") Object.assign(data, { via: ex.kind, app: ex.app ?? null });
+      if (backendMethod === "probe" && data?.app?.version && data.app.version !== APP_VERSION) {
+        // The helper owns the modules it loaded at start, so a plugin update
+        // without a helper restart serves the previous build's behavior. Say
+        // so instead of letting the agent debug a build that is not running.
+        data.app.bundled_version = APP_VERSION;
+        data.app.stale = true;
+        data.note = [data.note, `The running helper reports ${data.app.version} but this plugin is ${APP_VERSION} — restart the Codewhale Computer Use app to load the current build.`].filter(Boolean).join(" ");
+      }
     } else {
       const backend = await getBackend(computer, binding);
       if (typeof backend[backendMethod] !== "function") {
@@ -834,16 +843,94 @@ function respondError(id, code, message) {
   process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id, error: { code, message } }) + "\n");
 }
 
+/** JSON-RPC invalid-params error that survives the dispatch catch below. */
+function paramError(message) {
+  return Object.assign(new Error(message), { rpcCode: -32602 });
+}
+
+// ---------- bundled skill pack ----------
+// The operating guide travels with the server and is served as MCP resources
+// (skill://codewhale-cu/…) so any host can read the loop, the failure codes and
+// the safety rules without paying for them in every receipt. The pack is loaded
+// once at startup; a trimmed install without skills/ simply serves none.
+const SKILL_NAME = "computer-use";
+const SKILL_ROOT_URI = `skill://codewhale-cu/SKILL.md`;
+
+function parseFrontmatter(text) {
+  if (!text.startsWith("---\n")) return null;
+  const end = text.indexOf("\n---", 4);
+  if (end === -1) return null;
+  const out = {};
+  let key = null;
+  for (const line of text.slice(4, end).split("\n")) {
+    const m = /^([A-Za-z0-9_-]+):\s*(.*)$/.exec(line);
+    if (m) { key = m[1]; out[key] = [">-", ">"].includes(m[2]) ? "" : m[2].replace(/^["']|["']$/g, ""); continue; }
+    if (key && /^\s+\S/.test(line)) out[key] = `${out[key] ? `${out[key]} ` : ""}${line.trim()}`;
+  }
+  return out;
+}
+
+const skillPack = (() => {
+  const root = new URL("../skills/computer-use/", import.meta.url);
+  const files = [
+    ["SKILL.md", "text/markdown"],
+    ["references/quick-reference.md", "text/markdown"],
+    ["references/refusal-codes.md", "text/markdown"],
+  ];
+  const pack = [];
+  for (const [rel, mime] of files) {
+    try {
+      const bytes = fs.readFileSync(new URL(rel, root));
+      const text = bytes.toString("utf8");
+      pack.push({
+        rel, uri: `skill://codewhale-cu/${rel}`, mime, size: bytes.length, text,
+        frontmatter: rel === "SKILL.md" ? parseFrontmatter(text) : null,
+        sha256: crypto.createHash("sha256").update(bytes).digest("hex"),
+      });
+    } catch { /* no pack on disk — serve nothing */ }
+  }
+  return pack;
+})();
+const SKILL_DESCRIPTION = skillPack.find((f) => f.rel === "SKILL.md")?.frontmatter?.description ?? "Computer-use operating guide";
+
 const HANDLERS = {
   initialize(params) {
     return {
       protocolVersion: params?.protocolVersion ?? "2025-06-18",
-      capabilities: { tools: { listChanged: false } },
+      capabilities: {
+        tools: { listChanged: false },
+        resources: { listChanged: false, subscribe: false },
+        experimental: { "io.modelcontextprotocol/skills": {} },
+      },
       serverInfo: { name: SERVER_NAME, version: APP_VERSION, platforms: ["darwin", "win32", "linux", "harmonyos"], transports: ["local", "ssh", "hdc"] },
     };
   },
   "tools/list"() {
     return { tools: TOOLS };
+  },
+  "resources/list"() {
+    return { resources: skillPack.map(({ uri, rel, mime, size }) => ({ uri, name: rel, mimeType: mime, size })) };
+  },
+  "resources/read"(params) {
+    const file = skillPack.find((f) => f.uri === params?.uri);
+    if (!file) throw paramError(`resource "${params?.uri ?? ""}" is not part of the bundled skill pack — resources/list names the readable URIs`);
+    return { contents: [{ uri: file.uri, mimeType: file.mime, text: file.text }] };
+  },
+  "skills/list"() {
+    return {
+      skills: [{
+        uri: SKILL_ROOT_URI, name: SKILL_NAME, description: SKILL_DESCRIPTION,
+        files: skillPack.map(({ uri, sha256, size }) => ({ uri, sha256, bytes: size })),
+      }],
+    };
+  },
+  "skills/get"(params) {
+    const entry = skillPack.find((f) => f.uri === (params?.uri ?? SKILL_ROOT_URI));
+    if (!entry) throw paramError(`skill "${params?.uri ?? ""}" is unknown — skills/list names the catalog`);
+    return {
+      skill: { uri: entry.uri, name: SKILL_NAME, description: SKILL_DESCRIPTION, frontmatter: entry.frontmatter, content: entry.text },
+      manifest: skillPack.map(({ uri, sha256, size }) => ({ uri, sha256, bytes: size })),
+    };
   },
   async "tools/call"(params) {
     if (params?.name === "stop_computer_control") return callTool(params);
@@ -938,7 +1025,7 @@ async function handleLine(line) {
       respond(id, result);
     }
   } catch (err) {
-    if (id != null && !cancelled.delete(id)) respondError(id, -32603, err?.message ?? String(err));
+    if (id != null && !cancelled.delete(id)) respondError(id, Number.isInteger(err?.rpcCode) ? err.rpcCode : -32603, err?.message ?? String(err));
   } finally {
     if (id != null) requests.delete(id);
   }

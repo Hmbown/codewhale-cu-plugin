@@ -114,6 +114,41 @@ const MOUSE = {
 };
 const MOUSE_MOVED = 5;
 
+/**
+ * Native refusals carry exception reasons; these map to stable codes so
+ * receipts and callers can branch without parsing prose. Unknown reasons stay
+ * uncoded (the message is the contract there).
+ */
+export function nativeErrorCode(message) {
+  const m = String(message ?? "");
+  if (/ambiguous/i.test(m)) return "window_ambiguous";
+  if (/not capturable/i.test(m)) return "window_not_capturable";
+  if (/no accessibility geometry/i.test(m)) return "window_target_not_found";
+  if (/application not found|no running application/i.test(m)) return "app_not_found";
+  return null;
+}
+
+/**
+ * Choose the menu element for an exact title: a menu bar item at level 0, an
+ * open menu's item below it. Exact match only — a fuzzy match would activate
+ * the wrong command, and menu titles are stable enough to state precisely.
+ * Exported for tests; the walk itself is native.
+ */
+export function pickMenuElement(elements, label, menuBar) {
+  const role = menuBar ? "AXMenuBarItem" : "AXMenuItem";
+  return elements.find((el) => el?.label === label && el?.role === role) ?? null;
+}
+
+/**
+ * Regular apps are what "open an app" means; accessories and daemons answer
+ * menu-bar and background questions. Keep the signal, drop the XPC soup.
+ * A helper that predates the activation_policy field returns the list whole.
+ */
+export function selectApps(apps, all) {
+  if (all || !apps.some((a) => a.activation_policy)) return apps;
+  return apps.filter((a) => a.activation_policy === "regular" || a.frontmost === true);
+}
+
 export function create({ exec }) {
   const runL = (cmd, args, opts) => exec.run(cmd, args, opts);
   // The preview panel is on by default: while a session is bound to an app,
@@ -168,6 +203,7 @@ export function create({ exec }) {
     if (r.aborted || r.timedOut || r.code !== 0) {
       const error = new ExecError(r.aborted ? "computer request cancelled" : r.timedOut ? "native accessibility helper timed out" : r.stderr.trim() || "native accessibility helper failed", r);
       if (r.aborted) error.code = "cancelled";
+      else error.code = nativeErrorCode(error.message) ?? undefined;
       // A deterministic native refusal sent no input. A killed/timed-out
       // helper may have posted the press before losing its response.
       const postsPress = (tool === "key_event" && args.down) || ["type", "perform_action", "click_element", "scroll_element", "set_value", "focus_element", "select_text", "bg_pointer", "bg_key"].includes(tool) || (tool === "hit_test" && args.perform) || (tool === "pointer_sequence" && args.steps?.some((step) => [1, 3, 25].includes(step.type)));
@@ -595,7 +631,17 @@ export function create({ exec }) {
   }
 
   // ---------- apps / windows ----------
-  async function listApps() { return native("list_apps"); }
+  async function listApps(args = {}) {
+    const r = await native("list_apps");
+    const apps = Array.isArray(r?.apps) ? r.apps : [];
+    const shown = selectApps(apps, args?.all === true);
+    return {
+      apps: shown,
+      total: apps.length,
+      filtered: args?.all === true ? "all" : "regular",
+      ...(shown.length !== apps.length ? { note: "Regular (user-facing) apps only — pass all:true to include menu-bar helpers and background processes." } : {}),
+    };
+  }
 
   async function listWindows({ app_ref } = {}) { return native("list_windows", { app_ref: app_ref === undefined ? state.inputApp ?? undefined : app_ref }); }
 
@@ -639,6 +685,50 @@ export function create({ exec }) {
     // Recording) must never block the bind itself.
     if (state.previewEnabled) updatePreview(true).catch(() => {});
     return { launched: true, activate, keyboard_delivery: activate ? "foreground-guarded" : "process", input_scope: activate ? "shared-desktop" : "application", shared_pointer: !!activate, isolated_desktop: false, url: urlArg ?? null, resolved: p?.found ? { name: p.name, pid: p.pid, bundle_id: p.bundle_id, frontmost: p.frontmost } : null };
+  }
+
+  /**
+   * Menu items by title path, through accessibility only: no key events, no
+   * focus lease. Menus expose items only while open, so each level is pressed
+   * and the next is polled for. Exact titles; an ellipsis is part of the title.
+   */
+  async function invokeMenu(menuPath) {
+    if (!state.inputApp) throw new ExecError("open_application first — invoke_menu acts on the bound application");
+    if (!Array.isArray(menuPath) || menuPath.length < 1 || menuPath.length > 3 || menuPath.some((s) => typeof s !== "string" || !s.trim())) {
+      throw new ExecError('invoke_menu needs path: 1..3 non-empty menu titles, e.g. ["File","New"]');
+    }
+    const titles = menuPath.map((s) => s.trim());
+    const app_ref = state.inputApp;
+    const pressed = [];
+    for (let level = 0; level < titles.length; level++) {
+      const found = await findMenuItem(app_ref, titles[level], level === 0);
+      if (!found) {
+        throw Object.assign(new ExecError(`menu item "${titles[level]}" not found ${pressed.length ? `under ${pressed.join(" ▸ ")}` : "on the menu bar"} — menus expose items only while open; check the exact title with get_app_state (an ellipsis is part of the title)`), { code: "menu_item_not_found" });
+      }
+      if (found.enabled === false) {
+        throw Object.assign(new ExecError(`menu item "${titles[level]}" is present but disabled right now — the app validates it against its current state (in background mode that is often a missing key window for window-targeted commands like Close). Use an element action on the window's own control instead of pressing a disabled item.`), { code: "menu_item_disabled" });
+      }
+      const target = { app_ref, windowIndex: found.windowIndex ?? 0, path: found.path, role: found.role, label: found.label };
+      assertBoundElement(target);
+      const action = found.role === "AXMenuItem" && (found.actions ?? []).includes("AXPick") ? "AXPick" : "AXPress";
+      await native("perform_action", { target, action });
+      pressed.push(titles[level]);
+      if (level < titles.length - 1) await wait(140);
+    }
+    return { action_sent: true, strategy: "a11y", route: "accessibility", delivery: "background", menu: pressed, front_lease: false,
+             note: "Menu activation used accessibility only — no key events or focus lease. Verify the app effect (list_windows / get_app_state) before reporting success." };
+  }
+
+  /** Poll for the exact menu element; opens and submenu population are async. */
+  async function findMenuItem(app_ref, label, menuBar) {
+    const deadline = Date.now() + 4_000;
+    for (;;) {
+      const obs = await native("get_app_state", { app_ref, detail: "full" });
+      const hit = pickMenuElement(obs?.elements ?? [], label, menuBar);
+      if (hit) return hit;
+      if (Date.now() >= deadline) return null;
+      await wait(120);
+    }
   }
 
   // ---------- clipboard / cursor / waits ----------
@@ -820,7 +910,8 @@ export function create({ exec }) {
       if (!state.foregroundInput && (await native("input_capabilities"))?.window_record === 1) {
         const r = await native("bg_pointer", { steps });
         return { action_sent: true, strategy: "window-record", input_scope: "application-window",
-                 from, to, pointer_moved: false, front_lease: r.front_lease ?? true, window: r.window ?? null };
+                 from, to, pointer_moved: false, front_lease: r.front_lease === true, window: r.window ?? null,
+                 ...(typeof r.front_restored === "boolean" ? { front_restored: r.front_restored } : {}) };
       }
       const r = await gesture(steps, { restore: true, guard: from });
       return { action_sent: true, strategy: "event", from, to, ...pointerCost(r) };
@@ -846,8 +937,9 @@ export function create({ exec }) {
           for (let i = 0; i < notches; i++) steps.push({ scroll: [Math.sign(dx), Math.sign(dy)], x: target.x, y: target.y, delayMs: 15 });
           const r = await native("bg_pointer", { steps });
           return { action_sent: true, strategy: "window-record", input_scope: "application-window",
-                   direction, amount, pointer_moved: false, front_lease: r.front_lease ?? true, window: r.window ?? null,
-                   verified: false, verification_required: "observation" };
+                   direction, amount, pointer_moved: false, front_lease: r.front_lease === true, window: r.window ?? null,
+                   verified: false, verification_required: "observation",
+                   ...(typeof r.front_restored === "boolean" ? { front_restored: r.front_restored } : {}) };
         }
         throw Object.assign(new ExecError(`No background scrollbar at this point (${receipt?.reason ?? "not_found"}); choose an observed scroll area or a separate computer.`), { code: "background_scroll_unavailable" });
       }
@@ -882,7 +974,9 @@ export function create({ exec }) {
             if (i < n - 1) await wait(30);
           }
           return { action_sent: true, key, code, keyboard_delivery: "window-record", input_scope: "application-window",
-                   front_lease: last?.front_lease ?? true, repeat: n };
+                   front_lease: last?.front_lease === true, repeat: n,
+                   ...(typeof last?.front_restored === "boolean" ? { front_restored: last.front_restored } : {}),
+                   ...(last?.front_restored === false ? { note: "the momentary window-record lease did not hand the user's foreground back; their next keystrokes may land in this app. Tell the user." } : {}) };
         } catch (error) {
           // No focused window or a refused lease: the key cannot reach the
           // menu system this way either. Fall through to process delivery
@@ -895,7 +989,7 @@ export function create({ exec }) {
         if (i < n - 1) await wait(30);
       }
       return { action_sent: true, key, code, keyboard_delivery: state.foregroundInput ? "foreground-guarded" : "process", repeat: n,
-        ...(flags !== 0 && !state.foregroundInput ? { note: "This chord was dispatched to the process, which cannot act on menu key equivalents without a key window. If nothing happened, give the target an element ({type:'element',index}) or use perform_action." } : {}) };
+        ...(flags !== 0 && !state.foregroundInput ? { note: "process delivery (no focus lease was taken); menu key equivalents can be dropped without a key window. Verify the effect before retrying, or use invoke_menu for app menu commands." } : {}) };
     },
     hold_key: async ({ text, duration } = {}) => {
       const { flags, code, key } = parseChord(text);
@@ -939,6 +1033,7 @@ export function create({ exec }) {
       if (args.target?.type !== "element") throw new ExecError("perform_action needs an element target — {type:'element',index} from get_app_state");
       return native("perform_action", args);
     },
+    invoke_menu: async ({ path: menuPath } = {}) => invokeMenu(menuPath),
     read_clipboard: readClipboard,
     write_clipboard: writeClipboard,
     cursor_position: cursorPosition,
