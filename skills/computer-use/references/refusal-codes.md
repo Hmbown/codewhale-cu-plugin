@@ -34,6 +34,10 @@ Never retry a refusal unchanged — re-observe, re-target, or change route.
 | `browser_not_installed` | no Chromium-family browser found | install one, or set `CODEWHALE_CU_BROWSER_APP` to the app path |
 | `selector_not_found` | no element matches the CSS selector on the current page | re-check the selector against a fresh `browser {action:"screenshot"}` or `browser {action:"status"}` |
 | `unsupported_runtime` | this Node has no global WebSocket (browser transport) | use Node 22+ for the daemon/server running the plugin |
+| `not_granted` | the session's capability grant (`CODEWHALE_CU_GRANT`) does not include this tool | work inside the grant; the host narrowed it deliberately |
+| `frame_refused` | the app refused both the position and the size write | the window is fullscreen, tiled or otherwise not movable by the app |
+| `trajectory_not_found` | no trajectory file matches the id (or none exist) | `trajectory {action:"status"}` lists recent files |
+| `replay_too_large` | the trajectory exceeds the 200-turn replay cap | split it, or replay a pruned copy |
 | `app_upgrade_required` | the helper predates the feature or is not running | restart/update the Codewhale Computer Use app |
 | `unsupported_on_backend` | tool not implemented on that platform backend | check the platform note in the main skill |
 | `permission` / `permissions_denied` | a grant is missing | name the permission and the Settings pane, then stop |

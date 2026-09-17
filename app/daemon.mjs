@@ -171,12 +171,19 @@ async function serve(conn) {
           else {
             ownedSession = req.sessionId;
             const leaseToken = crypto.randomUUID();
-            leases.set(ownedSession, { socket: conn, token: leaseToken });
+            // A capability grant (set by the MCP server from CODEWHALE_CU_GRANT)
+            // narrows this lease for its whole life: the daemon refuses tools
+            // the grant does not name, so narrowing survives the socket.
+            const grant = Array.isArray(req.grant) && req.grant.length ? new Set(req.grant.map((t) => String(t))) : null;
+            leases.set(ownedSession, { socket: conn, token: leaseToken, grant });
             reopenSession(ownedSession);
-            reply = { ok: true, leaseToken };
+            reply = { ok: true, leaseToken, ...(grant ? { grant: [...grant] } : {}) };
           }
         } else if (!leases.has(req.sessionId) || leases.get(req.sessionId).token !== req.leaseToken) {
           reply = { ok: false, error: { code: "session_owner_required", message: "Computer request needs its live session owner lease; update or restart the MCP server" } };
+        } else if (leases.get(req.sessionId).grant && !leases.get(req.sessionId).grant.has(req.tool) && !["close_session", "release_session_input"].includes(req.tool)) {
+          // Cleanup must never be blocked by a grant; everything else is.
+          reply = { ok: false, error: { code: "not_granted", message: `this session's capability grant does not include "${req.tool}"` } };
         } else if (req.tool === "list_sessions") {
           // Content-free registry view over the live sessions. Available even
           // when the user has paused or stopped other sessions: seeing who is

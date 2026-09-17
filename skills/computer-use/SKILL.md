@@ -234,6 +234,20 @@ title, and a fresh `screenshot` shows the rendered truth. One tab per
 session; the last session out closes the shared browser. Node 22+ is needed
 for the WebSocket transport; older runtimes refuse with `unsupported_runtime`.
 
+## Recording and scope
+
+`trajectory` records every tool call this session makes into a local JSONL
+(off until started; arguments are stored verbatim, so treat the file as
+sensitive). `replay` re-runs a recorded file through the same pipeline —
+grants, permissions and the kill switch still apply — and stops at the first
+refusal; `dry_run` lists the plan first. A host may narrow the whole session
+with `CODEWHALE_CU_GRANT` (read-only, or a tool list): tools outside it are
+never advertised and calls fail `not_granted`. Work inside that scope; do not
+look for a workaround. `set_window_frame` moves or resizes one window and
+reports the app's own readback — when an app constrains or refuses part of
+the frame the receipt says so (`verified:false`, `ax_errors`, or
+`frame_refused`), and that is the app's answer, not a failure to retry blindly.
+
 ## Safety
 
 - `stop_computer_control` is the kill switch; after it, actions fail closed

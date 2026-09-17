@@ -148,6 +148,41 @@ test("list_sessions names live sessions content-free and drops closed ones", asy
   assert.equal(one.data.count, both.data.count - 1, "a closed session leaves the registry");
 });
 
+test("a capability grant narrows the daemon lease, and cleanup is never blocked", async () => {
+  const prior = process.env.CODEWHALE_CU_GRANT;
+  process.env.CODEWHALE_CU_GRANT = "probe";
+  try {
+    await openAppSession("grant-a");
+    assert.equal((await appSessionRequest({ tool: "probe", sessionId: "grant-a" })).ok, true);
+    const refused = await appSessionRequest({ tool: "get_app_state", sessionId: "grant-a", args: { app_ref: { name: "Nope" } } });
+    assert.equal(refused.ok, false);
+    assert.equal(refused.error.code, "not_granted", "the daemon refuses ungranted tools even if the server asked");
+    assert.equal((await appSessionRequest({ tool: "close_session", sessionId: "grant-a" })).ok, true, "cleanup must never be blocked by a grant");
+    process.env.CODEWHALE_CU_GRANT = "";
+    await openAppSession("grant-b");
+    assert.equal((await appSessionRequest({ tool: "get_app_state", sessionId: "grant-b", args: { app_ref: { name: "Open" } } })).ok, true, "a new session without a grant is unrestricted");
+    await appSessionRequest({ tool: "close_session", sessionId: "grant-b" });
+  } finally {
+    if (prior === undefined) delete process.env.CODEWHALE_CU_GRANT; else process.env.CODEWHALE_CU_GRANT = prior;
+  }
+});
+
+test("read-only grants survive the wire-name translation (request_access travels as probe)", async () => {
+  const prior = process.env.CODEWHALE_CU_GRANT;
+  process.env.CODEWHALE_CU_GRANT = "read-only";
+  try {
+    await openAppSession("grant-ro");
+    assert.equal((await appSessionRequest({ tool: "probe", sessionId: "grant-ro" })).ok, true, "the grant must cover the transport name the daemon actually sees");
+    assert.equal((await appSessionRequest({ tool: "get_app_state", sessionId: "grant-ro", args: { app_ref: { name: "Visible" } } })).ok, true, "observation tools stay granted");
+    const refused = await appSessionRequest({ tool: "left_click", sessionId: "grant-ro", args: { target: { type: "coordinate", x: 1, y: 1 } } });
+    assert.equal(refused.ok, false);
+    assert.equal(refused.error.code, "not_granted");
+    await appSessionRequest({ tool: "close_session", sessionId: "grant-ro" });
+  } finally {
+    if (prior === undefined) delete process.env.CODEWHALE_CU_GRANT; else process.env.CODEWHALE_CU_GRANT = prior;
+  }
+});
+
 test("disconnect cancels the child process and a queued request never posts input", async () => {
   const active = new AbortController();
   const queued = new AbortController();

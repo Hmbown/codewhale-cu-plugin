@@ -835,6 +835,33 @@ test('list_sessions in direct mode reports this process as the only session', as
   assert.equal(s.sessions[0].inputHeld, false);
 });
 
+test('list_apps {installed:true} returns the installed catalog with running flags', async (t) => {
+  const catalog = { apps: [{ name: 'Safari', bundle_id: 'com.apple.Safari', path: '/Applications/Safari.app', running: true, pid: 42 }, { name: 'Calculator', bundle_id: 'com.apple.calculator', path: '/System/Applications/Calculator.app', running: false }], count: 2 };
+  const { backend, calls } = stubBackend(t, (r) => (r.tool === 'installed_apps' ? catalog : null));
+  const r = await backend.list_apps({ installed: true });
+  assert.equal(r.installed, true);
+  assert.equal(r.apps.length, 2);
+  assert.equal(r.apps[0].running, true);
+  assert.equal(r.apps[1].running, false);
+  assert.match(r.note, /takes a moment/);
+  assert.ok(calls.some((c) => c.tool === 'installed_apps'));
+  assert.ok(!calls.some((c) => c.tool === 'list_apps'), 'the running-process list is not consulted');
+});
+
+test('set_window_frame validates geometry and the window index, then passes the readback through', async (t) => {
+  const receipt = { action_sent: true, window_id: 0, before: { x: 0, y: 0, w: 100, h: 100 }, after: { x: 40, y: 40, w: 300, h: 200 }, verified: true };
+  const { backend, calls } = stubBackend(t, (r) => (r.tool === 'set_window_frame' ? receipt : null));
+  await assert.rejects(backend.set_window_frame({ window_id: 0, frame: { x: 1, y: 2, w: 0, h: 5 } }), (e) => e.code === 'bad_args');
+  await assert.rejects(backend.set_window_frame({ window_id: -1, frame: { x: 1, y: 2, w: 3, h: 5 } }), (e) => e.code === 'bad_args');
+  await assert.rejects(backend.set_window_frame({ window_id: 0, frame: { x: 1, y: 2, w: Number.NaN, h: 5 } }), (e) => e.code === 'bad_args');
+  const r = await backend.set_window_frame({ window_id: 0, frame: { x: 40, y: 40, w: 300, h: 200 } });
+  assert.equal(r.verified, true);
+  assert.deepEqual(r.after, { x: 40, y: 40, w: 300, h: 200 });
+  const sent = calls.filter((c) => c.tool === 'set_window_frame').at(-1);
+  assert.deepEqual(sent.args.frame, { x: 40, y: 40, w: 300, h: 200 });
+  assert.equal(sent.args.window_id, 0);
+});
+
 test('kill_app validates its identity client-side and passes the native receipt through', async (t) => {
   const receipt = { killed: true, pid: 321, name: 'TextEdit', force_used: false };
   const { backend, calls } = stubBackend(t, (r) => (r.tool === 'kill_app' ? receipt : null));

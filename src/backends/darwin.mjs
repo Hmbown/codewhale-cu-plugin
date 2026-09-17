@@ -127,6 +127,7 @@ export function nativeErrorCode(message) {
   if (/not capturable/i.test(m)) return "window_not_capturable";
   if (/several running applications match/i.test(m)) return "ambiguous_application";
   if (/cannot be terminated by this plugin/i.test(m)) return "protected_application";
+  if (/refused the window frame change/i.test(m)) return "frame_refused";
   if (/no accessibility geometry/i.test(m)) return "window_target_not_found";
   if (/application not found|no running application/i.test(m)) return "app_not_found";
   return null;
@@ -670,6 +671,16 @@ export function create({ exec }) {
 
   // ---------- apps / windows ----------
   async function listApps(args = {}) {
+    if (args?.installed === true) {
+      const r = await native("installed_apps", {});
+      const apps = Array.isArray(r?.apps) ? r.apps : [];
+      return {
+        apps,
+        total: apps.length,
+        installed: true,
+        note: "Installed catalog from /Applications, /System/Applications and ~/Applications; running flags reflect this moment. This scan takes a moment.",
+      };
+    }
     const r = await native("list_apps");
     const apps = Array.isArray(r?.apps) ? r.apps : [];
     const shown = selectApps(apps, args?.all === true);
@@ -825,6 +836,16 @@ export function create({ exec }) {
       return { activeDisplay: index };
     },
     list_apps: listApps,
+    set_window_frame: async ({ app_ref, window_id, frame } = {}) => {
+      if (!frame || !Number.isFinite(frame.x) || !Number.isFinite(frame.y) || !Number.isFinite(frame.w) || !Number.isFinite(frame.h) || frame.w <= 0 || frame.h <= 0) {
+        throw Object.assign(new ExecError("set_window_frame needs frame {x,y,w,h} with positive w/h"), { code: "bad_args" });
+      }
+      if (!Number.isSafeInteger(window_id) || window_id < 0) {
+        throw Object.assign(new ExecError("set_window_frame needs window_id (a non-negative window index from list_windows)"), { code: "bad_args" });
+      }
+      const r = await native("set_window_frame", { app_ref, window_id, frame });
+      return { ...r, verified: r?.verified === true, note: r?.note ?? "the after frame is the app's own readback; cross-check with list_windows before relying on it" };
+    },
     list_windows: listWindows,
     open_application: openApplication,
     get_app_state: async ({ app_ref, detail, depth, window_id, include_ocr = false, ocr_region } = {}) => {

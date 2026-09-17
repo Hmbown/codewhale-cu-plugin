@@ -4,12 +4,14 @@
 // computer switching as a default: every tool accepts `computer`, and using a
 // computer id switches the sticky active computer.
 import fs from "node:fs";
+import path from "node:path";
 import crypto from "node:crypto";
 import * as registry from "../src/registry.mjs";
 import { backendFor, installRemoteAgent, executorFor, closeAppSession, routeFingerprint, closeSshChannel } from "../src/transport.mjs";
-import { TOOLS, TOOL_NAMES, REQUIRED_ARGS, ELEMENT_ONLY_TARGET, READ_ONLY_TOOLS, REMOTE_TOOLS, BACKEND_METHOD, resolveTool } from "../src/tools.mjs";
+import { TOOLS, TOOL_NAMES, REQUIRED_ARGS, ELEMENT_ONLY_TARGET, READ_ONLY_TOOLS, REMOTE_TOOLS, BACKEND_METHOD, resolveTool, parseGrant, MERGED_EXPANSION } from "../src/tools.mjs";
 import { tryJson, withSignal, throwIfAborted, wait } from "../src/exec.mjs";
 import { APP_VERSION } from "../src/app-socket.mjs";
+import { createRecorder, readTrajectory, listTrajectories, resolveTrajectory, isTrajectoryTool } from "../src/trajectory.mjs";
 
 const SERVER_NAME = "codewhale-cu";
 
@@ -24,6 +26,10 @@ let inFlight = 0; // actions currently dispatching to a backend/executor
 const cancelled = new Set();
 const requests = new Map();
 let dispatch = Promise.resolve();
+const recorder = createRecorder();
+let replaying = false;
+// Fixed at process start; nothing can widen it. See parseGrant for the form.
+const GRANT = parseGrant(process.env.CODEWHALE_CU_GRANT);
 /** state_id -> { computerId, app_ref, windowIndex, elements } */
 const appStates = new Map();
 /** computerId -> state_id of its most recent observation */
@@ -455,6 +461,12 @@ async function callTool(params) {
   } catch (err) {
     return { content: [{ type: "text", text: JSON.stringify(fail(null, err.code ?? "bad_args", err.message)) }], isError: true };
   }
+  // A narrowed session (CODEWHALE_CU_GRANT) refuses anything outside its grant
+  // before required-arg or routing behavior can leak. stop_computer_control
+  // stays reachable as the safety valve; the daemon enforces the same set.
+  if (GRANT && requested !== "stop_computer_control" && !GRANT.has(requested) && !GRANT.has(name)) {
+    return { content: [{ type: "text", text: JSON.stringify(fail(null, "not_granted", `"${requested}" is outside this session's capability grant (${GRANT.size} tools). The host narrowed this session deliberately; do not look for a workaround.`)) }], isError: true };
+  }
   // Hosts are not required to enforce inputSchema. Check declared `required`
   // fields here so a missing argument becomes bad_args instead of a backend
   // crash or an opaque native error. The message names the tool the caller
@@ -485,6 +497,50 @@ async function callTool(params) {
     const s = Math.max(0, Math.min(30, Number(args.seconds) || 1));
     await wait(s * 1000);
     return { content: [{ type: "text", text: JSON.stringify(receipt(null, { ok: true, waitedSec: s })) }] };
+  }
+
+  if (name === "trajectory_start") {
+    const r = recorder.start();
+    return { content: [{ type: "text", text: JSON.stringify(receipt(null, { ok: true, tool: "trajectory_start", ...r, note: "Every tool call this session makes is appended to a local JSONL. Arguments are stored verbatim so replay is faithful — start it only when the person knows it runs." })) }] };
+  }
+  if (name === "trajectory_stop") {
+    return { content: [{ type: "text", text: JSON.stringify(receipt(null, { ok: true, tool: "trajectory_stop", ...recorder.stop() })) }] };
+  }
+  if (name === "trajectory_status") {
+    return { content: [{ type: "text", text: JSON.stringify(receipt(null, { ok: true, tool: "trajectory_status", ...recorder.status(), recent: listTrajectories(5) })) }] };
+  }
+  if (name === "trajectory_replay") {
+    let file;
+    try { file = resolveTrajectory(args.id); } catch (err) {
+      return { content: [{ type: "text", text: JSON.stringify(fail(null, err.code ?? "bad_args", err.message)) }], isError: true };
+    }
+    const calls = readTrajectory(file).filter((entry) => entry.type === "call" && typeof entry.tool === "string" && !isTrajectoryTool(entry.tool));
+    if (calls.length > 200) {
+      return { content: [{ type: "text", text: JSON.stringify(fail(null, "replay_too_large", `this trajectory has ${calls.length} calls; replay is limited to 200 at a time`)) }], isError: true };
+    }
+    const dryRun = args.dry_run === true;
+    const results = [];
+    if (!dryRun) {
+      replaying = true;
+      try {
+        for (const call of calls) {
+          if (controlStopped && !READ_ONLY_TOOLS.has(call.tool)) { results.push({ tool: call.tool, ok: false, code: "control_stopped" }); break; }
+          let body = null;
+          try {
+            const r = await callTool({ name: call.tool, arguments: call.args ?? {} });
+            body = JSON.parse(r?.content?.[0]?.text ?? "null");
+          } catch (err) {
+            results.push({ tool: call.tool, ok: false, code: err?.code ?? "replay_failed", message: String(err?.message ?? err).slice(0, 200) });
+            break;
+          }
+          const ok = body?.ok !== false;
+          results.push({ tool: call.tool, ok, ...(ok ? {} : { code: body?.error?.code ?? "refused" }) });
+          if (!ok) break; // a trajectory is a sequence — replay stops where it broke
+        }
+      } finally { replaying = false; }
+    }
+    const failed = results.filter((r) => r.ok === false).length;
+    return { content: [{ type: "text", text: JSON.stringify(receipt(null, { ok: true, tool: "trajectory_replay", trajectory: path.basename(file), dry_run: dryRun, turns_in_file: calls.length, replayed: results.length, failed, ...(dryRun ? { plan: calls.map((c) => c.tool) } : { results }), note: dryRun ? "Nothing was executed. Run again without dry_run:true to replay through the normal gates." : "Replay re-entered the normal pipeline; grants, permissions and the kill switch still apply." })) }] };
   }
 
   if (name === "computer_list") {
@@ -613,7 +669,7 @@ async function callTool(params) {
     }
     // Out-of-process runners (the desktop app for the local computer, the
     // remote agent for ssh computers) get the request over the wire.
-    const backendMethod = BACKEND_METHOD[name] === "request_access" ? "probe" : BACKEND_METHOD[name];
+    const backendMethod = BACKEND_METHOD[name];
     let data;
     const ex = computer.transport === "local" || computer.transport === "ssh" ? await executorFor(computer, binding) : null;
     if (ex?.kind === "app") binding.usedApp = true;
@@ -776,6 +832,9 @@ async function callTool(params) {
         imageBlock = { type: "image", mimeType: bytes[0] === 0xff ? "image/jpeg" : "image/png", data: bytes.toString("base64") };
       }
     }
+    if (name === "request_access" && GRANT) {
+      data.grant = { mode: "narrowed", tools: [...GRANT].sort(), count: GRANT.size, note: "This session's tools were narrowed at launch (CODEWHALE_CU_GRANT); do not work around it." };
+    }
     const content = [{ type: "text", text: JSON.stringify(receipt(computer, { ok: true, tool: name, switched, ...(sink.reacquired ? { target_reacquired: true } : {}), ...data })) }];
     if (imageBlock) content.push(imageBlock);
     if ((name === "screenshot" && (data?.file || data?.path) && data?.pixels?.w > 0 && data?.pixels?.h > 0) ||
@@ -905,6 +964,21 @@ const skillPack = (() => {
 })();
 const SKILL_DESCRIPTION = skillPack.find((f) => f.rel === "SKILL.md")?.frontmatter?.description ?? "Computer-use operating guide";
 
+/**
+ * callTool plus optional trajectory recording. Recording wraps every call the
+ * session makes (refusals included — they are part of what happened); the
+ * recorder's own tools and replayed calls are never re-recorded.
+ */
+async function callToolRecorded(params) {
+  const result = await callTool(params);
+  if (recorder.active && !replaying && !isTrajectoryTool(params?.name)) {
+    let body = null;
+    try { body = JSON.parse(result?.content?.[0]?.text ?? "null"); } catch { /* non-JSON receipts record without an outcome */ }
+    recorder.append({ tool: params.name, args: params.arguments ?? {}, ok: body?.ok !== false, code: body?.error?.code ?? null });
+  }
+  return result;
+}
+
 const HANDLERS = {
   initialize(params) {
     return {
@@ -919,8 +993,11 @@ const HANDLERS = {
   },
   "tools/list"() {
     // The advertised surface is what every session pays for; merged-away wire
-    // names stay callable as aliases but are never listed.
-    return { tools: TOOLS.filter((t) => t.hidden !== true) };
+    // names stay callable as aliases but are never listed. A capability grant
+    // narrows the listing further, never widens it.
+    const advertised = TOOLS.filter((t) => t.hidden !== true);
+    if (!GRANT) return { tools: advertised };
+    return { tools: advertised.filter((t) => t.name === "stop_computer_control" || GRANT.has(t.name) || (MERGED_EXPANSION[t.name] ?? []).some((wire) => GRANT.has(wire))) };
   },
   "resources/list"() {
     return { resources: skillPack.map(({ uri, rel, mime, size }) => ({ uri, name: rel, mimeType: mime, size })) };
@@ -954,7 +1031,7 @@ const HANDLERS = {
     try {
       await previous;
       throwIfAborted();
-      return await callTool(params ?? {});
+      return await callToolRecorded(params ?? {});
     } catch (err) {
       if (err?.code !== "cancelled") throw err;
       return { content: [{ type: "text", text: JSON.stringify(fail(null, controlStopped ? "control_stopped" : "cancelled", err.message)) }], isError: true };

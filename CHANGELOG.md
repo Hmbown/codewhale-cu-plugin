@@ -1,5 +1,51 @@
 # Release notes
 
+## 0.8.0 — window frames, installed apps, trajectories, capability grants
+
+The last four from the dogfood gap list, in one batch (no per-feature version
+churn):
+
+- **`set_window_frame`** — move or resize one window by exact geometry
+  (`{x,y,w,h}` in the `list_windows` space) and read the result back from the
+  app itself: `verified` is the app's own geometry after a settle loop, with
+  `ax_errors` and a plain note when an app constrains (minimum sizes are
+  common) or refuses (fixed-size windows) part of the frame. Both axes
+  refusing is `frame_refused`.
+- **`list_apps {installed:true}`** — the installed catalog of openable apps
+  (`/Applications`, `/System/Applications`, `~/Applications`, one
+  subdirectory deep; bundle identity read from the bundle, never the folder
+  name) with running flags. On the dogfood machine: 143 apps, the user's
+  Chrome correctly flagged with its pid. The running-process list is not
+  consulted for this view.
+- **Trajectories — record, status, replay** (`trajectory`, advertised 36).
+  A local JSONL of every tool call the session makes — refusals included —
+  in the recordings dir, off until started. `replay` re-enters the normal
+  pipeline (grants, permissions and the kill switch all still apply), stops
+  at the first refusal, never re-records itself, refuses ids that escape the
+  trajectories directory, and caps a replay at 200 turns; `dry_run` lists the
+  plan first. Arguments are stored verbatim so replay is faithful — that is
+  the documented trade.
+- **Capability grants** — `CODEWHALE_CU_GRANT` (`read-only`, or a comma list
+  of tool names; merged names expand to their whole action set), fixed at
+  launch, nothing can widen it. Enforced twice: the server filters
+  `tools/list` and refuses calls as `not_granted` before validation, and the
+  app daemon stores the granted wire set on the session lease and refuses
+  ungranted tools at the boundary that actually sends input. Cleanup
+  (`close_session` / `release_session_input`) and `stop_computer_control` are
+  never blocked; `request_access` reports the active grant.
+
+Verification: `npm test` 332 tests — 318 pass / 0 fail / 15 platform-skipped
+(9 new across darwin, trajectory, grants, session lifecycle). Live smoke, app
+mode against the installed bundle: 143-app installed catalog with running
+flags (the user's Chrome flagged, its pid intact); TextEdit and Calculator
+frame changes with the app's own readback (Calculator's fixed-size refusal
+surfaced as ax_errors while the position moved); trajectory recorded three
+turns including a refusal, dry-run listed the plan, replay stopped at the
+refusal; a read-only grant narrowed the surface to 19 tools, refused
+`click` as not_granted, rode the daemon lease, and reported itself via
+request_access; browser and session registry spot checks stayed green —
+25/25 (receipts in /tmp/cu-probe-082).
+
 ## 0.7.2 — browser control over CDP
 
 The capability axis we did not have: a Chromium-family browser driven over the

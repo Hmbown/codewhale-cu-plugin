@@ -1086,6 +1086,111 @@ static id execute(NSDictionary *p) {
     }
     return @{@"killed":@(target.isTerminated),@"pid":@(tp),@"name":target.localizedName?:@"",@"force_used":@(forced)};
   }
+  if([tool isEqual:@"installed_apps"]) {
+    // Installed catalog: the apps a person could open, running or not. Root +
+    // one level of subdirectories (e.g. /Applications/Utilities); bundle
+    // identity comes from the bundle itself, never from the directory name.
+    NSMutableDictionary *running=@{}.mutableCopy;
+    for(NSRunningApplication *a in NSWorkspace.sharedWorkspace.runningApplications) {
+      if(a.bundleIdentifier) running[a.bundleIdentifier]=@(a.processIdentifier);
+    }
+    NSMutableDictionary *byId=@{}.mutableCopy;
+    NSFileManager *fm=NSFileManager.defaultManager;
+    NSArray *roots=@[@"/Applications", @"/System/Applications", [NSHomeDirectory() stringByAppendingPathComponent:@"Applications"]];
+    for(NSString *root in roots) {
+      cuCheckCancelled();
+      NSString *top=[root stringByResolvingSymlinksInPath];
+      NSMutableArray *dirs=[NSMutableArray array]; [dirs addObject:top];
+      for(NSString *sub in ([fm contentsOfDirectoryAtPath:top error:nil]?:@[])) {
+        if([sub hasPrefix:@"."]||[sub hasSuffix:@".app"]) continue;
+        NSString *p=[top stringByAppendingPathComponent:sub];
+        BOOL isDir=NO;
+        if([fm fileExistsAtPath:p isDirectory:&isDir] && isDir) [dirs addObject:p];
+      }
+      for(NSString *dir in dirs) {
+        for(NSString *item in ([fm contentsOfDirectoryAtPath:dir error:nil]?:@[])) {
+          if(![item hasSuffix:@".app"]) continue;
+          NSString *p=[dir stringByAppendingPathComponent:item];
+          NSBundle *b=[NSBundle bundleWithPath:p];
+          NSString *bid=b.bundleIdentifier;
+          if(!bid || byId[bid]) continue;
+          NSString *name=[b objectForInfoDictionaryKey:@"CFBundleDisplayName"];
+          if(!name.length) name=[b objectForInfoDictionaryKey:@"CFBundleName"];
+          if(!name.length) name=[item stringByDeletingPathExtension];
+          byId[bid]=@{@"name":name,@"bundle_id":bid,@"path":p}; 
+        }
+      }
+    }
+    NSMutableArray *out=[NSMutableArray array];
+    for(NSString *bid in byId) {
+      NSMutableDictionary *e=[byId[bid] mutableCopy];
+      NSNumber *pid=running[bid];
+      e[@"running"]=(pid!=nil)?@YES:@NO;
+      if(pid) e[@"pid"]=pid;
+      [out addObject:e];
+    }
+    [out sortUsingComparator:^NSComparisonResult(NSDictionary *a, NSDictionary *b){ return [a[@"name"] localizedCaseInsensitiveCompare:b[@"name"]]; }];
+    return @{@"apps":out,@"count":@(out.count)};
+  }
+  if([tool isEqual:@"set_window_frame"]) {
+    NSRunningApplication *a=resolve(args[@"app_ref"]);
+    if(!a) @throw [NSException exceptionWithName:@"app" reason:@"application not found" userInfo:nil];
+    NSDictionary *frame=args[@"frame"];
+    double fx=NAN,fy=NAN,fw=NAN,fh=NAN;
+    if([frame isKindOfClass:NSDictionary.class]) {
+      fx=[frame[@"x"] doubleValue]; fy=[frame[@"y"] doubleValue];
+      fw=[frame[@"w"] doubleValue]; fh=[frame[@"h"] doubleValue];
+    }
+    if(!isfinite(fx)||!isfinite(fy)||!isfinite(fw)||!isfinite(fh)||fw<=0||fh<=0)
+      @throw [NSException exceptionWithName:@"args" reason:@"set_window_frame needs frame {x,y,w,h} with positive w/h" userInfo:nil];
+    NSNumber *idxNum=args[@"window_id"];
+    if(![idxNum isKindOfClass:NSNumber.class] || [idxNum doubleValue]!=[idxNum intValue] || [idxNum intValue]<0)
+      @throw [NSException exceptionWithName:@"args" reason:@"set_window_frame needs window_id (a non-negative window index from list_windows)" userInfo:nil];
+    AXUIElementRef app=AXUIElementCreateApplication(a.processIdentifier);
+    axPrepare(app);
+    NSArray *windows=attr(app,@"AXWindows");
+    NSInteger idx=[idxNum intValue];
+    if(idx>=(NSInteger)windows.count) { CFRelease(app); @throw [NSException exceptionWithName:@"window" reason:@"window_id is out of range; call list_windows for valid indices" userInfo:nil]; }
+    AXUIElementRef win=(__bridge AXUIElementRef)windows[idx];
+    CGRect before=CGRectNull; cuFrame(win,&before);
+    cuCheckCancelled();
+    CGPoint p=CGPointMake(fx,fy); CGSize z=CGSizeMake(fw,fh);
+    AXValueRef pos=AXValueCreate(kAXValueCGPointType,&p), size=AXValueCreate(kAXValueCGSizeType,&z);
+    AXError pe=AXUIElementSetAttributeValue(win,(__bridge CFStringRef)@"AXPosition",pos);
+    AXError se=AXUIElementSetAttributeValue(win,(__bridge CFStringRef)@"AXSize",size);
+    // Some apps re-anchor a window's origin when its size changes; re-assert
+    // the position once after the size has had a run-loop turn to settle.
+    if(pe==kAXErrorSuccess) {
+      [NSRunLoop.currentRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.05]];
+      AXError pe2=AXUIElementSetAttributeValue(win,(__bridge CFStringRef)@"AXPosition",pos);
+      if(pe2!=kAXErrorSuccess) pe=pe2;
+    }
+    if(pos) CFRelease(pos); if(size) CFRelease(size);
+    if(pe!=kAXErrorSuccess && se!=kAXErrorSuccess) {
+      CFRelease(app);
+      @throw [NSException exceptionWithName:@"window" reason:@"the app refused the window frame change (it may be fullscreen, tiled or non-resizable)" userInfo:nil];
+    }
+    // Apps apply frame changes over a few run-loop turns; verify by reading the
+    // window's own geometry back, not by trusting the set call.
+    CGRect after=before;
+    for(int i=0;i<40;i++) {
+      cuCheckCancelled();
+      [NSRunLoop.currentRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.05]];
+      cuFrame(win,&after);
+      if(fabs(after.origin.x-fx)<1 && fabs(after.origin.y-fy)<1 && fabs(after.size.width-fw)<1 && fabs(after.size.height-fh)<1) break;
+    }
+    CFRelease(app);
+    BOOL verified = fabs(after.origin.x-fx)<1 && fabs(after.origin.y-fy)<1 && fabs(after.size.width-fw)<1 && fabs(after.size.height-fh)<1;
+    NSMutableDictionary *done=[@{@"action_sent":@YES,@"window_id":@(idx),
+             @"before":@{@"x":@(before.origin.x),@"y":@(before.origin.y),@"w":@(before.size.width),@"h":@(before.size.height)},
+             @"after":@{@"x":@(after.origin.x),@"y":@(after.origin.y),@"w":@(after.size.width),@"h":@(after.size.height)},
+             @"verified":@(verified)} mutableCopy];
+    if(pe!=kAXErrorSuccess || se!=kAXErrorSuccess) {
+      done[@"ax_errors"]=@{@"position":@(pe),@"size":@(se)};
+      done[@"note"]=@"the app constrained or refused part of the frame (minimum sizes and fixed-size windows are common); the after readback is what actually happened";
+    }
+    return done;
+  }
   NSRunningApplication *inputApp=nil;
   if([@[@"type",@"key_event",@"bg_key",@"mouse_event",@"scroll",@"hit_test",@"pointer_sequence",@"bg_pointer"] containsObject:tool]) {
     if(![args[@"input_app_ref"] isKindOfClass:NSDictionary.class]) @throw [NSException exceptionWithName:@"focus" reason:@"open_application first to bind the input destination" userInfo:nil];

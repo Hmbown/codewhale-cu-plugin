@@ -30,7 +30,9 @@ receipt is JSON: `ok`, plus what was sent. Verify effects by observing.
 
 ## Apps & computers
 - `open_application {name|bundle_id|pid, activate?}` — bind the input target; `app_not_found` when the selector resolves nowhere.
+- `list_apps {installed:true}` — the installed catalog (openable apps, running or not, one subdirectory deep) instead of the running list.
 - `kill_app {name|bundle_id|pid, force?}` — quit an app; refuses an ambiguous name match (pass pid); never the helper itself.
+- `set_window_frame {app_ref?, window_id, frame:{x,y,w,h}}` — move/resize one window; readbacks report what the app actually did (`verified`, `ax_errors`).
 - `preview {enabled}` — floating panel: captured window + agent/user cursors; live while bound.
 - `computer {action, id?}` — list / switch / register / remove.
 - `recording {action, …}` — start / stop / status / list (opt-in screen recordings).
@@ -45,7 +47,9 @@ receipt is JSON: `ok`, plus what was sent. Verify effects by observing.
 
 ## Session
 - `list_sessions` — live sessions on this machine (content-free) and the user's control mode.
+- `trajectory {action:"start"|"stop"|"status"|"replay", id?, dry_run?}` — record this session's tool calls to a local JSONL; replay re-enters the normal pipeline and stops at the first refusal.
 - `stop_computer_control {reason?}` — kill switch; input for this session ends.
+- Capability grant (host config): `CODEWHALE_CU_GRANT="read-only"` or a tool list — the session can never see or call beyond it (`not_granted`).
 
 ## Recipes
 
@@ -66,6 +70,13 @@ Fill and submit a web form (CDP, no pixels):
 3. `browser {action:"click", selector:"button[type=submit]"}`
 4. Verify with `browser {action:"status"}` (url/title) or a fresh
    `browser {action:"screenshot"}` — never assume the click landed.
+
+Record and re-verify a session:
+1. `trajectory {action:"start"}`
+2. …do the work…
+3. `trajectory {action:"stop"}` → file + turns
+4. `trajectory {action:"replay", id, dry_run:true}` to review, then replay
+   without `dry_run` to re-run through the same gates.
 2. `list_windows` → window gone
 
 > `invoke_menu` is exact for app-level commands (New, Save, Quit).

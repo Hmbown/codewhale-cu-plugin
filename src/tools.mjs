@@ -100,8 +100,8 @@ export const TOOLS = [
   },
   {
     name: "list_apps",
-    description: "List running applications (name, pid, bundle id, frontmost). Defaults to regular user-facing apps; pass all:true to include background agents and helpers (menu-bar extras, XPC services, CLI processes).",
-    inputSchema: { type: "object", properties: { all: { type: "boolean", description: "Include accessory/background processes, not just regular apps. Use when looking for a menu-bar or helper process; keep the default for picking an app to control." }, computer: computerParam }, additionalProperties: false },
+    description: "List running applications (name, pid, bundle id, frontmost). Defaults to regular user-facing apps; pass all:true to include background agents and helpers (menu-bar extras, XPC services, CLI processes); pass installed:true for the installed catalog of openable apps (running or not, with a running flag) — that scan takes a moment.",
+    inputSchema: { type: "object", properties: { all: { type: "boolean", description: "Include accessory/background processes, not just regular apps. Use when looking for a menu-bar or helper process; keep the default for picking an app to control." }, installed: { type: "boolean", description: "List installed apps (openable, running or not) from the standard Applications folders instead of running processes." }, computer: computerParam }, additionalProperties: false },
   },
   {
     name: "list_windows",
@@ -256,6 +256,36 @@ export const TOOLS = [
     name: "browser_stop",
     description: "Close this session's tab; the shared browser closes when no tabs remain.",
     inputSchema: { type: "object", properties: { computer: computerParam }, additionalProperties: false },
+  },
+  {
+    name: "trajectory",
+    description: "Record this session's tool calls to a local JSONL and replay them later. Actions: start | stop | status (file, turns, recent files) | replay {id?, dry_run?} — replay re-enters the normal tool pipeline, so permissions, grants and the kill switch still apply, and it stops at the first refusal. Off unless started; arguments are stored verbatim (typed text included) so replay is faithful; files stay in the recordings dir on this machine.",
+    inputSchema: { type: "object", required: ["action"], properties: { action: { enum: ["start", "stop", "status", "replay"] }, id: { type: "string", description: "traj-*.jsonl name from status; defaults to the most recent" }, dry_run: { type: "boolean", description: "list what replay would do without executing anything" }, computer: computerParam }, additionalProperties: false },
+  },
+  {
+    name: "trajectory_start",
+    description: "Start recording this session's tool calls to a local JSONL.",
+    inputSchema: { type: "object", properties: { computer: computerParam }, additionalProperties: false },
+  },
+  {
+    name: "trajectory_stop",
+    description: "Stop recording and report the file and turn count.",
+    inputSchema: { type: "object", properties: { computer: computerParam }, additionalProperties: false },
+  },
+  {
+    name: "trajectory_status",
+    description: "Report whether a trajectory is recording, the file, and recent trajectories.",
+    inputSchema: { type: "object", properties: { computer: computerParam }, additionalProperties: false },
+  },
+  {
+    name: "trajectory_replay",
+    description: "Replay a recorded trajectory through the normal tool pipeline, stopping at the first refusal.",
+    inputSchema: { type: "object", properties: { id: { type: "string" }, dry_run: { type: "boolean" }, computer: computerParam }, additionalProperties: false },
+  },
+  {
+    name: "set_window_frame",
+    description: "Move or resize one window by exact geometry and read the result back. frame is in screen points, the same space list_windows reports: {x,y,w,h}. window_id is the zero-based window index from list_windows. Some windows refuse (fullscreen, tiled); the receipt carries the app's own before/after readback and `verified`.",
+    inputSchema: { type: "object", required: ["window_id", "frame"], properties: { app_ref: { type: "object", properties: { pid: { type: "integer" }, name: { type: "string" }, bundle_id: { type: "string" } }, additionalProperties: false, description: "defaults to the bound app" }, window_id: { type: "integer", minimum: 0, description: "zero-based window index from list_windows" }, frame: { type: "object", properties: { x: { type: "number" }, y: { type: "number" }, w: { type: "number" }, h: { type: "number" } }, required: ["x", "y", "w", "h"], additionalProperties: false }, computer: computerParam }, additionalProperties: false },
   },
   {
     name: "open_application",
@@ -480,13 +510,13 @@ export const ELEMENT_ONLY_TARGET = new Set(["set_value", "select_text", "perform
 /** Tools that never touch a computer (available even after kill switch). */
 export const READ_ONLY_TOOLS = new Set([
   "computer_list", "stop_computer_control", "wait", "request_access", "recording_list", "recording_status",
-  "find_elements", "get_value", "list_sessions", "browser_status",
+  "find_elements", "get_value", "list_sessions", "browser_status", "trajectory_status", "trajectory_start", "trajectory_stop",
 ]);
 
 /** Tools dispatchable to a remote agent over ssh (allow-list must match agent.mjs). */
 export const REMOTE_TOOLS = new Set([
   "preview", "probe", "list_displays", "switch_display", "list_apps", "list_sessions", "list_windows",
-  "open_application", "kill_app", "get_app_state", "resolve_element", "screenshot", "zoom",
+  "open_application", "kill_app", "set_window_frame", "get_app_state", "resolve_element", "screenshot", "zoom",
   "browser_start", "browser_status", "browser_navigate", "browser_click", "browser_type", "browser_screenshot", "browser_stop",
   "left_click", "double_click", "triple_click", "right_click", "middle_click",
   "mouse_move", "left_click_drag", "left_mouse_down", "left_mouse_up", "scroll",
@@ -497,14 +527,50 @@ export const REMOTE_TOOLS = new Set([
 
 /** Map public tool name -> backend method name. */
 export const BACKEND_METHOD = Object.fromEntries(
-  TOOLS.filter((t) => !["computer_list", "computer_switch", "computer_register", "computer_remove", "stop_computer_control", "wait", "wait_for", "find_elements", "run_actions"].includes(t.name))
+  TOOLS.filter((t) => !["computer_list", "computer_switch", "computer_register", "computer_remove", "stop_computer_control", "wait", "wait_for", "find_elements", "run_actions", "trajectory_start", "trajectory_stop", "trajectory_status", "trajectory_replay"].includes(t.name))
     .map((t) => [t.name, {
+      request_access: "probe",
       recording_start: "recordingStart",
       recording_stop: "recordingStop",
       recording_status: "recordingStatus",
       recording_list: "recordingList",
     }[t.name] ?? t.name]),
 );
+
+/**
+ * Wire-name expansion for merged tools, used by capability grants: naming a
+ * merged tool admits every action it can dispatch to.
+ */
+export const MERGED_EXPANSION = {
+  click: ["left_click", "double_click", "triple_click", "right_click", "middle_click"],
+  pointer: ["mouse_move", "left_mouse_down", "left_mouse_up"],
+  clipboard: ["read_clipboard", "write_clipboard"],
+  recording: ["recording_start", "recording_stop", "recording_status", "recording_list"],
+  computer: ["computer_list", "computer_switch", "computer_register", "computer_remove"],
+  key: ["key", "hold_key"],
+  browser: ["browser_start", "browser_status", "browser_navigate", "browser_click", "browser_type", "browser_screenshot", "browser_stop"],
+  trajectory: ["trajectory_start", "trajectory_stop", "trajectory_status", "trajectory_replay"],
+};
+
+/**
+ * Parse CODEWHALE_CU_GRANT — "read-only", or a comma list of tool names —
+ * into a wire-name set. The grant is fixed when the server starts (there is
+ * no tool that can widen it) and it is enforced twice: here, so the model
+ * never sees or reaches an ungranted tool, and at the app daemon, so a
+ * narrowed server cannot smuggle one through. Returns null when unset.
+ */
+export function parseGrant(value) {
+  if (value == null || (typeof value === "string" && !value.trim())) return null;
+  const out = new Set();
+  for (const raw of String(value).split(",")) {
+    const name = raw.trim();
+    if (!name) continue;
+    if (name === "read-only") { for (const tool of OBSERVATION_TOOLS) out.add(tool); continue; }
+    if (MERGED_EXPANSION[name]) { for (const tool of MERGED_EXPANSION[name]) out.add(tool); continue; }
+    out.add(name);
+  }
+  return out.size ? out : null;
+}
 
 // ---------- MCP tool annotations ----------
 // Host-facing hints for approval and sandbox policy (MCP spec `annotations`).
@@ -520,6 +586,7 @@ const TOOL_ANNOTATIONS = {
   list_apps: READ_ONLY_ANNOTATION, list_windows: READ_ONLY_ANNOTATION, wait_for: READ_ONLY_ANNOTATION,
   list_sessions: READ_ONLY_ANNOTATION,
   kill_app: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
+  set_window_frame: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
   get_app_state: READ_ONLY_ANNOTATION, find_elements: READ_ONLY_ANNOTATION, get_value: READ_ONLY_ANNOTATION,
   screenshot: READ_ONLY_ANNOTATION, zoom: READ_ONLY_ANNOTATION, cursor_position: READ_ONLY_ANNOTATION,
   read_clipboard: READ_ONLY_ANNOTATION, recording_list: READ_ONLY_ANNOTATION, recording_status: READ_ONLY_ANNOTATION,
@@ -551,6 +618,11 @@ const TOOL_ANNOTATIONS = {
   click: INPUT_ANNOTATION,
   pointer: INPUT_ANNOTATION,
   browser: INPUT_ANNOTATION,
+  trajectory: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+  trajectory_status: READ_ONLY_ANNOTATION,
+  trajectory_start: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  trajectory_stop: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  trajectory_replay: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
   browser_status: READ_ONLY_ANNOTATION,
   browser_screenshot: READ_ONLY_ANNOTATION,
   browser_start: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
@@ -567,6 +639,13 @@ for (const tool of TOOLS) {
 }
 
 /**
+ * Tools that only observe, straight from their annotations. This is the
+ * "read-only" capability grant — distinct from READ_ONLY_TOOLS (the smaller
+ * post-kill-switch set that also drives the safety valve).
+ */
+export const OBSERVATION_TOOLS = new Set(TOOLS.filter((t) => t.annotations.readOnlyHint === true).map((t) => t.name));
+
+/**
  * Merged-away names. They stay callable as aliases (receipts, pinned hosts and
  * existing tests keep working) but never appear in tools/list — the advertised
  * surface is what costs every session context.
@@ -579,6 +658,7 @@ const HIDDEN_FROM_LIST = new Set([
   "computer_list", "computer_switch", "computer_register", "computer_remove",
   "hold_key",
   "browser_start", "browser_status", "browser_navigate", "browser_click", "browser_type", "browser_screenshot", "browser_stop",
+  "trajectory_start", "trajectory_stop", "trajectory_status", "trajectory_replay",
 ]);
 for (const tool of TOOLS) {
   if (HIDDEN_FROM_LIST.has(tool.name)) tool.hidden = true;
@@ -681,6 +761,18 @@ export function resolveTool(name, args = {}) {
         case "stop": return { name: "browser_stop", args: rest };
         default:
           throw bad(`browser action must be start, status, navigate, click, type, screenshot or stop (got ${JSON.stringify(args.action)})`);
+      }
+    }
+    case "trajectory": {
+      const rest = { ...args };
+      delete rest.action;
+      switch (args.action) {
+        case "start": return { name: "trajectory_start", args: rest };
+        case "stop": return { name: "trajectory_stop", args: rest };
+        case "status": return { name: "trajectory_status", args: rest };
+        case "replay": return { name: "trajectory_replay", args: rest };
+        default:
+          throw bad(`trajectory action must be start, stop, status or replay (got ${JSON.stringify(args.action)})`);
       }
     }
     default:

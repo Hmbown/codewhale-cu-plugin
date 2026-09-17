@@ -384,7 +384,18 @@ with an upgrade error instead of sharing another client's input state.
 
 The advertised surface is merged for context economy — `click`, `pointer`,
 `clipboard`, `recording`, `computer`, `browser`, with `key {duration}` covering
-holds; `list_sessions` and `kill_app` ride alongside as themselves.
+holds; `list_sessions`, `kill_app`, `set_window_frame` and `trajectory` ride
+alongside as themselves, and `list_apps {installed:true}` returns the
+installed catalog rather than running processes.
+
+### Capability grants
+
+`CODEWHALE_CU_GRANT` narrows a server process at launch: `read-only`, or a
+comma list of tool names (a merged name expands to its whole action set).
+`tools/list` advertises only granted tools, ungranted calls fail as
+`not_granted` before validation, and the app daemon enforces the same set on
+the session lease so a narrowed server cannot smuggle one through. Cleanup and
+`stop_computer_control` are never blocked; `request_access` reports the grant.
 The per-action wire names (`left_click`, `read_clipboard`, `recording_start`,
 `computer_list`, `hold_key`, …) remain callable as aliases, so pinned hosts and
 receipts keep working; `tools/list` advertises the merged set only.
