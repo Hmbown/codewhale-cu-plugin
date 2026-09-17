@@ -164,7 +164,7 @@ test("MCP cancellation drains input, keeps the host alive, and isolates a second
 test("stop cancels active and queued actions, releases held input, and leaves probes usable", async () => {
   const host = mcp();
   await host.tool("get_app_state", { app_ref: { name: "Stopped host" } });
-  await host.tool("left_mouse_down", { target: { x: 10, y: 10 } });
+  await host.tool("left_mouse_down", { target: { type: "coordinate", space: "screen", x: 10, y: 10 } });
   const hold = host.start("hold_key", { text: "mcp-stop", duration: 10 });
   await until(() => calls().some((item) => item.method === "child_started" && item.text === "mcp-stop"));
   const queued = host.start("type", { text: "must never arrive after stop" });
@@ -212,7 +212,7 @@ test("retiring a helper-backed local alias closes only that MCP host's session",
   const owner = calls().find(item => item.method === "get_app_state" && item.appName === "Retiring alias owner").instance;
   const other = calls().find(item => item.method === "get_app_state" && item.appName === "Alias retirement survivor").instance;
   assert.notEqual(owner, other);
-  assert.equal((await retiring.tool("left_mouse_down", { target: { x: 10, y: 10 } })).ok, true);
+  assert.equal((await retiring.tool("left_mouse_down", { target: { type: "coordinate", space: "screen", x: 10, y: 10 } })).ok, true);
   assert.equal((await survivor.tool("type", { text: "blocked by retiring owner" })).error.code, "input_busy");
 
   // Registration only changes the private fixture catalog. No HDC observation
@@ -253,7 +253,7 @@ test("MCP forced exit releases idle held input without waiting for another clien
   const survivor = mcp();
   await dead.tool("get_app_state", { app_ref: { name: "Killed idle host" } });
   await survivor.tool("get_app_state", { app_ref: { name: "Surviving host" } });
-  await dead.tool("left_mouse_down", { target: { x: 10, y: 10 } });
+  await dead.tool("left_mouse_down", { target: { type: "coordinate", space: "screen", x: 10, y: 10 } });
   assert.equal((await survivor.tool("type", {text:"must wait for held pointer"})).error.code,"input_busy");
   assert.equal((await survivor.tool("request_access")).ok,true,"observation stays available while another session holds input");
   const exit = new Promise((resolve) => dead.child.once("exit", resolve));
@@ -300,7 +300,7 @@ test("an app update re-leases live sessions transparently; an absent app still f
 test("MCP EOF releases a completed mouse-down and helper shutdown aborts active children", async () => {
   const host = mcp();
   await host.tool("get_app_state", { app_ref: { name: "Disconnected host" } });
-  await host.tool("left_mouse_down", { target: { x: 10, y: 10 } });
+  await host.tool("left_mouse_down", { target: { type: "coordinate", space: "screen", x: 10, y: 10 } });
   await closeHost(host);
   assert.ok(calls().some((item) => item.method === "release_input" && item.appName === "Disconnected host" && item.pointerDown));
   const held = appSessionRequest({ tool: "hold_key", sessionId: "helper-exit", args: { text: "helper-exit" } });

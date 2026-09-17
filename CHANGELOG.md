@@ -1,5 +1,53 @@
 # Release notes
 
+## 0.6.1 — concurrent-use hardening and honest chord delivery
+
+Dogfooding while a person used the same Mac surfaced four defects; all are
+fixed and re-verified live on macOS 26.1 (TextEdit, background mode):
+
+- **Missing arguments no longer crash or reach the helper.** The server now
+  enforces each tool schema's `required` fields before dispatch, so a bare
+  `left_mouse_down`/`select_text`/`key`/`hold_key`/… call returns a
+  structured `bad_args` receipt instead of a `TypeError` ("Cannot read
+  properties of undefined") or an opaque native error (`-25205`). Schemas
+  themselves were corrected too: `left_mouse_down` and `select_text` now
+  declare `required:["target"]`, and `set_value`/`select_text`/
+  `perform_action` accept element targets only — a coordinate there never
+  worked and now fails `bad_target` at the boundary. Backend handlers got
+  matching null-guards for direct/agent call paths.
+- **`key` modifier chords actually fire in background mode.** `cmd+w`,
+  `cmd+s` and friends are menu key equivalents that only validate against a
+  key window; the 0.6.0 process-bound route discarded them while reporting
+  `action_sent`. Flagged chords now use the window-record channel when the
+  helper supports it (`keyboard_delivery:"window-record"`,
+  `front_lease:true` — a momentary no-raise lease, cursor untouched). Live
+  check: `cmd+w` closed the target TextEdit document while the user kept
+  working. With no focusable window the chord falls back to process
+  delivery *and says so* in a receipt note, so a silent no-op is no longer
+  reported as success.
+- **Stale targets report what actually happened.** A bare element index
+  binds the computer's latest observation; the failure message previously
+  printed `element 16 of undefined` because it echoed the absent
+  `state_id`. Stale/stale-adjacent errors now name the resolved state id
+  and app (`element 16 of state s-4 (TextEdit) no longer resolves
+  (window_not_found)`) and note that the user or app may have changed it.
+- **`open_application` retires cross-app element indices.** Rebinding to a
+  different app deletes the computer's latest-observation pointer so a bare
+  `index` can't silently address the previous app's tree under a concurrent
+  user; the receipt carries a note. Explicit `state_id` pins still resolve
+  through their own observation.
+
+Also fixed: `set_value`'s web replacement path sent cmd+a twice — `bg_key`
+posts a complete press per call, so the separate down/up calls were
+redundant (harmless for select-all, but two front leases).
+
+Verification: `npm test` 268 pass / 0 fail / 15 platform-skipped (8 new
+regression tests); `node scripts/check-receipts.mjs docs parity/results`
+clean; live MCP dogfood against the installed 0.6.0 helper (direct mode,
+`CODEWHALE_CU_APP=off`) exercised malformed args, background chords, stale
+elements and app-switch eviction. No native-helper changes — the running
+0.6.0 helper already speaks `bg_key`/`window_record`.
+
 ## 0.6.0 — window-routed background pointer and web-area traversal
 
 - **Background mouse input now reaches AppKit views without touching the

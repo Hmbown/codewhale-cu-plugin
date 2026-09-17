@@ -235,11 +235,11 @@ export const TOOLS = [
   },
   {
     name: "left_mouse_down", description: "Press and hold the left button at a target. Release with left_mouse_up.",
-    inputSchema: { type: "object", properties: { target: targetSchema, computer: computerParam }, additionalProperties: false },
+    inputSchema: { type: "object", required: ["target"], properties: { target: targetSchema, computer: computerParam }, additionalProperties: false },
   },
   {
-    name: "left_mouse_up", description: "Release the left button pressed by left_mouse_down.",
-    inputSchema: { type: "object", properties: { computer: computerParam }, additionalProperties: false },
+    name: "left_mouse_up", description: "Release the left button pressed by left_mouse_down. An optional target releases at that point instead of where the button went down.",
+    inputSchema: { type: "object", properties: { target: targetSchema, computer: computerParam }, additionalProperties: false },
   },
   {
     name: "scroll", description: "Scroll up/down/left/right at a target. macOS background mode uses the target's accessibility scrollbar without moving the cursor; amount counts native increments or 5% normalized steps, named in the receipt. Where no AX scrollbar exists (overlay scrollers, web pages) wheel events are delivered through the window-record route (strategy \"window-record\", a momentary no-raise front lease, cursor untouched). Other raw routes use lines/notches. Prefer an observed scroll-area element.",
@@ -260,7 +260,7 @@ export const TOOLS = [
   },
   {
     name: "set_value", description: "Set an editable element's value. Native controls take a background-safe AXValue write with read-back verify; web-area elements take the replacement path (focus, select-all through the window-record channel, type, read-back verify) because Chromium silently no-ops direct AXValue writes. Element targets only.",
-    inputSchema: { type: "object", required: ["target", "value"], properties: { target: targetSchema, value: { type: "string" }, computer: computerParam }, additionalProperties: false },
+    inputSchema: { type: "object", required: ["target", "value"], properties: { target: elementTargetSchema, value: { type: "string" }, computer: computerParam }, additionalProperties: false },
   },
   {
     name: "focus", description: "Focus an observed element through the accessibility layer (background-safe). Prefer this before type() on composers that ignore AXPress.",
@@ -311,12 +311,12 @@ export const TOOLS = [
     },
   },
   {
-    name: "select_text", description: "Select a text range [start, length] in an element, or place the caret when omitted.",
-    inputSchema: { type: "object", properties: { target: targetSchema, text_range: { type: "array", items: { type: "integer" }, minItems: 2, maxItems: 2 }, computer: computerParam }, additionalProperties: false },
+    name: "select_text", description: "Select a text range [start, length] in an element, or place the caret when the range is omitted. Element targets only.",
+    inputSchema: { type: "object", required: ["target"], properties: { target: elementTargetSchema, text_range: { type: "array", items: { type: "integer" }, minItems: 2, maxItems: 2 }, computer: computerParam }, additionalProperties: false },
   },
   {
-    name: "perform_action", description: "Invoke a named accessibility action on an element (e.g. AXPress on macOS, Invoke on Windows/UIA, click on harmony). Only actions the element advertises.",
-    inputSchema: { type: "object", required: ["target", "action"], properties: { target: targetSchema, action: { type: "string" }, computer: computerParam }, additionalProperties: false },
+    name: "perform_action", description: "Invoke a named accessibility action on an element (e.g. AXPress on macOS, Invoke on Windows/UIA, click on harmony). Only actions the element advertises. Element targets only.",
+    inputSchema: { type: "object", required: ["target", "action"], properties: { target: elementTargetSchema, action: { type: "string" }, computer: computerParam }, additionalProperties: false },
   },
   // ---- clipboard / runtime ----
   {
@@ -375,6 +375,13 @@ export const TOOLS = [
 ];
 
 export const TOOL_NAMES = new Set(TOOLS.map((t) => t.name));
+
+/** Required argument names per tool, straight from each inputSchema. */
+export const REQUIRED_ARGS = new Map(TOOLS.map((t) => [t.name, t.inputSchema.required ?? []]));
+
+/** Tools whose target must be an observed element — a coordinate reaches the
+ *  backend unresolvable and fails opaquely, so refuse it at the boundary. */
+export const ELEMENT_ONLY_TARGET = new Set(["set_value", "select_text", "perform_action"]);
 
 /** Tools that never touch a computer (available even after kill switch). */
 export const READ_ONLY_TOOLS = new Set([

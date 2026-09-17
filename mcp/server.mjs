@@ -6,7 +6,7 @@
 import fs from "node:fs";
 import * as registry from "../src/registry.mjs";
 import { backendFor, installRemoteAgent, executorFor, closeAppSession, routeFingerprint, closeSshChannel } from "../src/transport.mjs";
-import { TOOLS, TOOL_NAMES, READ_ONLY_TOOLS, REMOTE_TOOLS, BACKEND_METHOD } from "../src/tools.mjs";
+import { TOOLS, TOOL_NAMES, REQUIRED_ARGS, ELEMENT_ONLY_TARGET, READ_ONLY_TOOLS, REMOTE_TOOLS, BACKEND_METHOD } from "../src/tools.mjs";
 import { tryJson, withSignal, throwIfAborted, wait } from "../src/exec.mjs";
 import { APP_VERSION } from "../src/app-socket.mjs";
 
@@ -143,7 +143,7 @@ function resolveElement(target, computer) {
     : "no observation on this computer yet — call get_app_state first");
   const el = st.elements[target.index];
   if (!el) throw new ServerError("unknown_element", `element index ${target.index} is outside state ${stateId} (0..${st.elements.length - 1})`);
-  return { state: st, element: el };
+  return { state: st, element: el, stateId };
 }
 
 class ServerError extends Error {
@@ -181,24 +181,28 @@ async function normalizeTarget(computer, target, kind, resolve, sink) {
     return { x: Math.round(pt.x), y: Math.round(pt.y), strategy: "event", coordinate_space: "raster" };
   }
   if (target?.type === "element") {
-    const { state, element } = resolveElement(target, computer);
+    const { state, element, stateId } = resolveElement(target, computer);
     if (state.computerId && state.computerId !== computer.id) {
-      throw new ServerError("state_wrong_computer", `state_id "${target.state_id}" belongs to computer "${state.computerId}", not "${computer.id}" — call get_app_state on that computer again`);
+      throw new ServerError("state_wrong_computer", `state_id "${stateId}" belongs to computer "${state.computerId}", not "${computer.id}" — call get_app_state on that computer again`);
     }
+    // The receipt must name the observation actually resolved — a bare index
+    // binds the computer's latest state, so reporting `target.state_id` would
+    // say "undefined" for the common case.
+    const where = `state ${stateId} (${state.app_ref?.name ?? state.app_ref?.bundle_id ?? `pid ${state.app_ref?.pid}`})`;
     let fresh = null;
     if (resolve) {
       const res = await resolve({ app_ref: state.app_ref, windowIndex: element.windowIndex ?? 0, path: element.path });
       if (!res?.found || !res.element) {
-        throw new ServerError("element_stale", `element ${target.index} of ${target.state_id} no longer resolves (${res?.reason ?? "not_found"}) — call get_app_state again`);
+        throw new ServerError("element_stale", `element ${target.index} of ${where} no longer resolves (${res?.reason ?? "not_found"}) — the user or the app may have changed it; call get_app_state again`);
       }
       fresh = res.element;
       if (fresh.role !== element.role) {
-        throw new ServerError("element_stale", `element ${target.index} of ${target.state_id} changed role (${element.role} → ${fresh.role}) — call get_app_state again`);
+        throw new ServerError("element_stale", `element ${target.index} of ${where} changed role (${element.role} → ${fresh.role}) — call get_app_state again`);
       }
       // In-place replacement: same role and geometry but a different label is
       // still a different element (e.g. "Load" → "Confirm").
       if (fresh.label !== element.label) {
-        throw new ServerError("element_stale", `element ${target.index} of ${target.state_id} changed label (${element.label} → ${fresh.label}) — call get_app_state again`);
+        throw new ServerError("element_stale", `element ${target.index} of ${where} changed label (${element.label} → ${fresh.label}) — call get_app_state again`);
       }
     }
     if (kind === "semantic") {
@@ -212,7 +216,7 @@ async function normalizeTarget(computer, target, kind, resolve, sink) {
       fresh.size?.w !== element.size?.w || fresh.size?.h !== element.size?.h);
     const pos = fresh?.position ?? element.position;
     const sz = fresh?.size ?? element.size;
-    if (!pos || !sz) throw new ServerError("element_no_geometry", `element ${target.index} has no cached geometry — use a coordinate target`);
+    if (!pos || !sz) throw new ServerError("element_no_geometry", `element ${target.index} of ${where} has no cached geometry — use a coordinate target`);
     if (moved && sink) sink.reacquired = true;
     // Keep the element identity as well as geometry: semantic clicks must not
     // substitute whichever element happens to occupy an oversized AX center.
@@ -440,6 +444,14 @@ async function callTool(params) {
     return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: { code: "unknown_tool", message: `unknown tool "${name}"` } }) }], isError: true };
   }
   let args = params.arguments ?? {};
+  // Hosts are not required to enforce inputSchema. Check declared `required`
+  // fields here so a missing argument becomes bad_args instead of a backend
+  // crash or an opaque native error.
+  for (const field of REQUIRED_ARGS.get(name) ?? []) {
+    if (args[field] === undefined || args[field] === null) {
+      return { content: [{ type: "text", text: JSON.stringify(fail(null, "bad_args", `${name} requires "${field}"`)) }], isError: true };
+    }
+  }
 
   if (name === "stop_computer_control") {
     controlStopped = true;
@@ -694,6 +706,25 @@ async function callTool(params) {
       }
     }
 
+    // Binding a different app retires this computer's element cache: a bare
+    // index must never silently address the previous app's observation —
+    // under a concurrent user that mistake clicks the wrong window.
+    if (name === "open_application" && data?.resolved) {
+      const latestId = latestStateByComputer.get(computer.id);
+      const latest = latestId ? appStates.get(latestId) : null;
+      if (latest) {
+        const a = latest.app_ref ?? {};
+        const b = data.resolved;
+        const sameApp = a.pid != null && b.pid != null
+          ? a.pid === b.pid
+          : (a.bundle_id && b.bundle_id ? a.bundle_id === b.bundle_id : a.name === b.name);
+        if (!sameApp) {
+          latestStateByComputer.delete(computer.id);
+          data.note = [data.note, "Element indices from earlier observations belonged to a different app — call get_app_state before targeting."].filter(Boolean).join(" ");
+        }
+      }
+    }
+
     if (name === "get_app_state" && args.include_ocr) {
       data.ocr ??= { status: "unavailable", reason: "Text recognition is not available on this backend", blocks: [] };
       if (data.ocr.raster) {
@@ -766,7 +797,15 @@ async function prepareArgs(computer, name, args, resolve, sink) {
   const semantic = new Set(["set_value", "select_text", "perform_action", "focus", "get_value"]);
   for (const key of ["target", "from_target", "to"]) {
     const given = out[key];
-    if (!given?.type) continue;
+    if (given == null) continue;
+    // Hosts that don't enforce inputSchema can hand us any shape. Refuse
+    // before it reaches a backend as an opaque native error or a TypeError.
+    if (typeof given !== "object" || Array.isArray(given) || (given.type !== "coordinate" && given.type !== "element")) {
+      throw new ServerError("bad_target", `${key} must be {type:'coordinate',x,y[,space]} or {type:'element',index[,state_id]} — got ${JSON.stringify(given)?.slice(0, 120)}`);
+    }
+    if (key === "target" && ELEMENT_ONLY_TARGET.has(name) && given.type !== "element") {
+      throw new ServerError("bad_target", `${name} accepts element targets only — observe the control with get_app_state and pass {type:'element',index}`);
+    }
     const kind = key === "target" && semantic.has(name) ? "semantic" : "pointer";
     out[key] = { ...given, ...(await normalizeTarget(computer, given, kind, resolve, sink)) };
   }

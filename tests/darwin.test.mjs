@@ -446,6 +446,64 @@ test('macOS foreground delivery requires explicit activation and resets on backg
   assert.equal(calls.at(-1).args.foreground_input,false);
 });
 
+test('macOS background modifier chords ride the window-record route and say so', async t => {
+  const {backend,calls}=stubBackend(t,request=>request.tool==='input_capabilities'
+    ?{input_lease:1,window_record:1}
+    :request.tool==='bg_key'?{action_sent:true,front_lease:true}:null);
+  await backend.open_application({name:'Fixture'});
+  const r=await backend.key({text:'cmd+w'});
+  assert.equal(r.action_sent,true);
+  assert.equal(r.keyboard_delivery,'window-record');
+  assert.equal(r.front_lease,true);
+  const bg=calls.filter(c=>c.tool==='bg_key');
+  assert.equal(bg.length,1,'one bg_key call posts a complete press');
+  assert.equal(bg[0].args.code,13);
+  assert.equal(bg[0].args.flags,1<<20);
+  assert.equal(bg[0].args.input_app_ref.pid,321);
+  assert.ok(!calls.some(c=>c.tool==='key_event'),'no process-bound key may accompany a window-record press');
+  // Unmodified keys keep plain process delivery.
+  const plain=await backend.key({text:'tab'});
+  assert.equal(plain.keyboard_delivery,'process');
+});
+
+test('macOS background chord without a key window falls back honestly, not silently', async t => {
+  const {backend,calls}=stubBackend(t,request=>request.tool==='input_capabilities'
+    ?{input_lease:1,window_record:1}
+    :request.tool==='bg_key'?{nativeResult:{code:1,spawned:true,stdout:'',stderr:'no focused window for a window-routed key; focus a control first'}}:null);
+  await backend.open_application({name:'Fixture'});
+  const r=await backend.key({text:'cmd+n'});
+  assert.equal(r.keyboard_delivery,'process');
+  assert.match(r.note,/menu key equivalents/);
+  assert.deepEqual(calls.filter(c=>c.tool==='key_event').map(c=>c.args.down),[true,false]);
+});
+
+test('macOS background chord fails closed after the bound app exits', async t => {
+  const {backend,calls}=stubBackend(t,request=>request.tool==='input_capabilities'
+    ?{input_lease:1,window_record:1}
+    :request.tool==='bg_key'?{nativeResult:{code:1,spawned:true,stdout:'',stderr:'input application is no longer running; open_application again'}}:null);
+  await backend.open_application({name:'Fixture'});
+  await assert.rejects(backend.key({text:'cmd+w'}),/no longer running/);
+  assert.ok(!calls.some(c=>c.tool==='key_event'),'a dead app must not fall back to process delivery of a menu chord');
+});
+
+test('macOS input handlers refuse a missing target without dereferencing it', async t => {
+  const {backend,calls}=stubBackend(t,()=>null);
+  await backend.open_application({name:'Fixture'});
+  for (const call of [
+    ()=>backend.left_mouse_down({}),
+    ()=>backend.left_mouse_down(),
+    ()=>backend.mouse_move({}),
+    ()=>backend.left_click({}),
+    ()=>backend.scroll({}),
+    ()=>backend.select_text({}),
+    ()=>backend.set_value({value:'x'}),
+    ()=>backend.perform_action({action:'AXPress'}),
+  ]) {
+    await assert.rejects(call, error=>!(error instanceof TypeError));
+  }
+  assert.ok(!calls.some(c=>['pointer_sequence','bg_pointer','select_text','set_value','perform_action'].includes(c.tool)));
+});
+
 test('macOS foreground refusal never sends an unowned global key-up', async t => {
   const { backend, calls } = stubBackend(t, request => request.tool === 'key_event' && request.args.down
     ? { nativeResult: { code: 1, spawned: true, stdout: '', stderr: 'foreground changed to Mail (pid 999); expected Fixture (pid 321)' } } : null);

@@ -170,13 +170,13 @@ export function create({ exec }) {
       if (r.aborted) error.code = "cancelled";
       // A deterministic native refusal sent no input. A killed/timed-out
       // helper may have posted the press before losing its response.
-      const postsPress = (tool === "key_event" && args.down) || ["type", "perform_action", "click_element", "scroll_element", "set_value", "focus_element", "select_text", "bg_pointer"].includes(tool) || (tool === "hit_test" && args.perform) || (tool === "pointer_sequence" && args.steps?.some((step) => [1, 3, 25].includes(step.type)));
+      const postsPress = (tool === "key_event" && args.down) || ["type", "perform_action", "click_element", "scroll_element", "set_value", "focus_element", "select_text", "bg_pointer", "bg_key"].includes(tool) || (tool === "hit_test" && args.perform) || (tool === "pointer_sequence" && args.steps?.some((step) => [1, 3, 25].includes(step.type)));
       error.inputMayHaveBeenSent = postsPress && r.spawned === true && (r.aborted || r.timedOut);
       if (error.inputMayHaveBeenSent) error.message += "; input may already have been sent — observe the target before doing anything else";
       throw error;
     }
     const result = tryJson(r.stdout, null);
-    if (state.previewEnabled && state.inputApp && ["type", "key_event", "pointer_sequence", "bg_pointer", "set_value", "select_text", "perform_action", "hit_test", "click_element", "scroll_element", "focus_element"].includes(tool)) {
+    if (state.previewEnabled && state.inputApp && ["type", "key_event", "pointer_sequence", "bg_pointer", "bg_key", "set_value", "select_text", "perform_action", "hit_test", "click_element", "scroll_element", "focus_element"].includes(tool)) {
       try { await updatePreview(); } catch (error) { result.preview_error = error.message; }
     }
     return result;
@@ -355,7 +355,7 @@ export function create({ exec }) {
       else if (KEY_CODES[p] != null) { if (key) throw new ExecError(`multiple non-modifier keys in "${text}"`); key = p; }
       else throw new ExecError(`unknown key "${p}" (supported: ${Object.keys(KEY_CODES).join(", ")} + modifiers cmd/ctrl/alt/shift/fn)`);
     }
-    if (key == null) throw new ExecError(`no non-modifier key in "${text}" — use hold_key for modifier-only holds`);
+    if (key == null) throw new ExecError(`no non-modifier key in "${text}"`);
     return { flags, code: KEY_CODES[key], key };
   }
 
@@ -734,8 +734,8 @@ export function create({ exec }) {
     },
     screenshot,
     zoom,
-    left_click: async ({ target, strategy = "auto" }) => {
-      if (target.type !== "element" || strategy === "event" || strategy === "app") return pointerClick("left", target.x, target.y, 1, strategy);
+    left_click: async ({ target, strategy = "auto" } = {}) => {
+      if (target?.type !== "element" || strategy === "event" || strategy === "app") return pointerClick("left", target?.x, target?.y, 1, strategy);
       if (!["auto", "a11y"].includes(strategy)) throw new ExecError(`strategy must be auto, a11y, app or event (got ${JSON.stringify(strategy)})`);
       try {
         assertBoundElement(target);
@@ -753,17 +753,17 @@ export function create({ exec }) {
         throw error;
       }
     },
-    double_click: ({ target }) => pointerClick("left", target.x, target.y, 2),
-    triple_click: ({ target }) => pointerClick("left", target.x, target.y, 3),
-    right_click: async ({ target }) => {
-      if (target.type !== "element") return pointerClick("right", target.x, target.y, 1);
+    double_click: ({ target } = {}) => pointerClick("left", target?.x, target?.y, 2),
+    triple_click: ({ target } = {}) => pointerClick("left", target?.x, target?.y, 3),
+    right_click: async ({ target } = {}) => {
+      if (target?.type !== "element") return pointerClick("right", target?.x, target?.y, 1);
       assertBoundElement(target);
       await requireBackgroundActions();
       return native("click_element", { target, context: true });
     },
-    middle_click: ({ target }) => pointerClick("middle", target.x, target.y, 1),
-    mouse_move: async ({ target }) => {
-      assertInScreen(target.x, target.y);
+    middle_click: ({ target } = {}) => pointerClick("middle", target?.x, target?.y, 1),
+    mouse_move: async ({ target } = {}) => {
+      assertInScreen(target?.x, target?.y);
       requireSharedPointer();
       if (state.pointerLease) {
         try {
@@ -776,8 +776,8 @@ export function create({ exec }) {
       const r = await gesture([{ type: MOUSE_MOVED, x: target.x, y: target.y, button: 0, clickState: 0 }], { restore: false, guard: target });
       return { action_sent: true, strategy: "event", at: { x: target.x, y: target.y }, ...pointerCost(r) };
     },
-    left_mouse_down: async ({ target }) => {
-      assertInScreen(target.x, target.y);
+    left_mouse_down: async ({ target } = {}) => {
+      assertInScreen(target?.x, target?.y);
       requireSharedPointer();
       if (state.pointerLease) throw new ExecError("this session already holds the left pointer button; release it first");
       await assertOwnsPoint(target.x, target.y);
@@ -788,7 +788,7 @@ export function create({ exec }) {
       state.pointer = { x: target.x, y: target.y };
       return { action_sent: true, strategy: "event", at: state.pointer, ...pointerCost(state.pointerLease.receipt) };
     },
-    left_mouse_up: async ({ target }) => {
+    left_mouse_up: async ({ target } = {}) => {
       if (!state.pointerLease) throw new ExecError("no agent pointer button is held by this session");
       const loc = target ?? state.pointer;
       if (!loc) throw new ExecError("no agent pointer position — mouse_move or left_mouse_down first");
@@ -800,8 +800,8 @@ export function create({ exec }) {
       state.pointer = { x: loc.x, y: loc.y };
       return { action_sent: true, strategy: "event", at: state.pointer, pointer_moved: true, pointer_restored: false };
     },
-    left_click_drag: async ({ from_target: from, to }) => {
-      assertInScreen(from.x, from.y); assertInScreen(to.x, to.y);
+    left_click_drag: async ({ from_target: from, to } = {}) => {
+      assertInScreen(from?.x, from?.y); assertInScreen(to?.x, to?.y);
       const steps = [
         { type: MOUSE_MOVED, x: from.x, y: from.y, button: 0, clickState: 0 },
         { type: MOUSE.left.down, x: from.x, y: from.y, button: 0, clickState: 1, delayMs: 60 },
@@ -819,8 +819,8 @@ export function create({ exec }) {
       const r = await gesture(steps, { restore: true, guard: from });
       return { action_sent: true, strategy: "event", from, to, ...pointerCost(r) };
     },
-    scroll: async ({ target, direction = "down", amount = 5 }) => {
-      assertInScreen(target.x, target.y);
+    scroll: async ({ target, direction = "down", amount = 5 } = {}) => {
+      assertInScreen(target?.x, target?.y);
       if (!state.foregroundInput) {
         await requireBackgroundActions();
         if (target.type === "element") {
@@ -858,22 +858,47 @@ export function create({ exec }) {
       const r = await gesture(steps, { restore: true, guard: target });
       return { action_sent: true, strategy: "event", direction, amount, ...pointerCost(r) };
     },
-    type: (args) => native("type", args),
-    key: async ({ text, repeat = 1 }) => {
+    type: (args = {}) => native("type", args),
+    key: async ({ text, repeat = 1 } = {}) => {
       const { flags, code, key } = parseChord(text);
-      for (let i = 0; i < Math.max(1, Math.min(100, repeat)); i++) {
-        await withPressedKey(code, flags, () => {});
-        if (i < repeat - 1) await wait(30);
+      const n = Math.max(1, Math.min(100, repeat));
+      // A chorded press is usually aimed at the menu system (cmd+w,
+      // cmd+shift+g, …), and key equivalents only validate against a key
+      // window. A process-bound event without one is discarded silently —
+      // the receipt would still say action_sent. In background mode the
+      // window-record route supplies a momentary key window, so flagged
+      // chords go through it when the helper supports it.
+      if (flags !== 0 && !state.foregroundInput && (await native("input_capabilities"))?.window_record === 1) {
+        try {
+          let last;
+          for (let i = 0; i < n; i++) {
+            last = await native("bg_key", { code, flags });
+            if (i < n - 1) await wait(30);
+          }
+          return { action_sent: true, key, code, keyboard_delivery: "window-record", input_scope: "application-window",
+                   front_lease: last?.front_lease ?? true, repeat: n };
+        } catch (error) {
+          // No focused window or a refused lease: the key cannot reach the
+          // menu system this way either. Fall through to process delivery
+          // and say plainly in the receipt what was actually sent.
+          if (!/no focused window|window-routed background keys|bg_dispatch/.test(error.message)) throw error;
+        }
       }
-      return { action_sent: true, key, code, keyboard_delivery: state.foregroundInput ? "foreground-guarded" : "process", repeat: Math.max(1, Math.min(100, repeat)) };
+      for (let i = 0; i < n; i++) {
+        await withPressedKey(code, flags, () => {});
+        if (i < n - 1) await wait(30);
+      }
+      return { action_sent: true, key, code, keyboard_delivery: state.foregroundInput ? "foreground-guarded" : "process", repeat: n,
+        ...(flags !== 0 && !state.foregroundInput ? { note: "This chord was dispatched to the process, which cannot act on menu key equivalents without a key window. If nothing happened, give the target an element ({type:'element',index}) or use perform_action." } : {}) };
     },
-    hold_key: async ({ text, duration }) => {
+    hold_key: async ({ text, duration } = {}) => {
       const { flags, code, key } = parseChord(text);
       const d = Math.max(0.05, Math.min(30, Number(duration) || 1));
       await withPressedKey(code, flags, () => wait(d * 1000));
       return { action_sent: true, key, keyboard_delivery: state.foregroundInput ? "foreground-guarded" : "process", heldSec: d };
     },
-    set_value: async (args) => {
+    set_value: async (args = {}) => {
+      if (args.target?.type !== "element") throw new ExecError("set_value needs an element target — {type:'element',index} from get_app_state");
       try {
         return await native("set_value", args);
       } catch (error) {
@@ -886,9 +911,9 @@ export function create({ exec }) {
         const value = String(args.value ?? "");
         await native("focus_element", { target: args.target });
         // cmd+a through the record channel: menu key equivalents only
-        // validate against a key window, which the lease provides.
-        await native("bg_key", { code: 0, flags: 1 << 20, down: true });
-        await native("bg_key", { code: 0, flags: 1 << 20, down: false });
+        // validate against a key window, which the lease provides. bg_key
+        // posts a complete press (down and up); the `down` field is unused.
+        await native("bg_key", { code: 0, flags: 1 << 20 });
         await new Promise((r) => setTimeout(r, 60));
         await native("type", { text: value });
         const back = await native("get_value", { target: args.target });
@@ -898,10 +923,16 @@ export function create({ exec }) {
                  ...(verified ? {} : { note: "replacement did not verify against the control's own value; observe before relying on it" }) };
       }
     },
-    focus: (args) => native("focus_element", args),
-    get_value: (args) => native("get_value", args),
-    select_text: (args) => native("select_text", args),
-    perform_action: (args) => native("perform_action", args),
+    focus: (args = {}) => native("focus_element", args),
+    get_value: (args = {}) => native("get_value", args),
+    select_text: async (args = {}) => {
+      if (args.target?.type !== "element") throw new ExecError("select_text needs an element target — {type:'element',index} from get_app_state");
+      return native("select_text", args);
+    },
+    perform_action: async (args = {}) => {
+      if (args.target?.type !== "element") throw new ExecError("perform_action needs an element target — {type:'element',index} from get_app_state");
+      return native("perform_action", args);
+    },
     read_clipboard: readClipboard,
     write_clipboard: writeClipboard,
     cursor_position: cursorPosition,

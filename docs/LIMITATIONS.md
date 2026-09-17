@@ -223,6 +223,20 @@ sent a press (or a dispatched helper was interrupted before acknowledging it).
 Receipts distinguish `keyboard_delivery: "process"` and
 `"foreground-guarded"`. Selecting `activate:false` resets the latter.
 
+In background mode a `key` call carrying modifier flags (cmd, ctrl, alt,
+shift, fn) is usually aimed at the menu system — `cmd+w`, `cmd+s`,
+`cmd+shift+g` — and menu key equivalents only validate against a *key*
+window, which a process-bound event never has. Version 0.6.0 dispatched
+those chords to the process and the receipt still said `action_sent`; the
+keystroke was discarded. Version 0.6.1 routes flagged chords through the
+window-record channel (`keyboard_delivery:"window-record"`), which supplies
+a momentary no-raise front lease so the target window is key for the
+duration — the user's cursor and foreground are restored. When no focused
+window exists to make key (nothing observed/focused yet), the chord falls
+back to process delivery and the receipt carries a note saying the menu
+system may not have seen it — dispatch is reported honestly, never claimed
+as effect. Unmodified keys keep plain process delivery.
+
 Neither delivery mode supplies application acknowledgement. Observe the
 result, especially in native file dialogs and applications whose toolkit
 ignores synthesized input. Session bindings and observations are independent
