@@ -760,7 +760,7 @@ async function callTool(params) {
     // disk and still bound, so zoom or a narrower capture returns a viewable
     // image. Never trade the session for one screenshot.
     let imageBlock = null;
-    if ((name === "screenshot" || name === "zoom") && computer.transport === "local" && (data.file || data.path)) {
+    if ((name === "screenshot" || name === "zoom" || name === "browser_screenshot") && computer.transport === "local" && (data.file || data.path)) {
       const file = data.file || data.path;
       const size = fs.statSync(file).size;
       if (encodedSize(size) > INLINE_IMAGE_MAX_BYTES) {
@@ -779,6 +779,7 @@ async function callTool(params) {
     const content = [{ type: "text", text: JSON.stringify(receipt(computer, { ok: true, tool: name, switched, ...(sink.reacquired ? { target_reacquired: true } : {}), ...data })) }];
     if (imageBlock) content.push(imageBlock);
     if ((name === "screenshot" && (data?.file || data?.path) && data?.pixels?.w > 0 && data?.pixels?.h > 0) ||
+        (name === "browser_screenshot" && !!data?.file) ||
         (name === "get_app_state" && data?.found !== false && Array.isArray(data?.elements))) {
       binding.needsObservation = false;
     }

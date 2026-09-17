@@ -9,6 +9,7 @@ import { withSignal, throwIfAborted } from "./exec.mjs";
 export const ALLOWED = new Set([
   "preview", "platform", "probe", "list_displays", "switch_display", "list_apps", "list_sessions", "list_windows",
   "open_application", "kill_app", "get_app_state", "resolve_element", "screenshot", "zoom",
+  "browser_start", "browser_status", "browser_navigate", "browser_click", "browser_type", "browser_screenshot", "browser_stop",
   "left_click", "double_click", "triple_click", "right_click", "middle_click",
   "mouse_move", "left_click_drag", "left_mouse_down", "left_mouse_up", "scroll",
   "type", "key", "hold_key", "set_value", "focus", "get_value", "select_text", "perform_action", "invoke_menu",

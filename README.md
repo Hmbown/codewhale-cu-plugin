@@ -336,6 +336,20 @@ a frozen still; its cursor is separate from the hardware pointer. Close the
 panel or use `enabled: false` to hide it — and the session that showed the
 panel hides it when it closes, so no panel outlives its session.
 
+### Browser control (CDP)
+
+`browser` drives a Chromium-family browser over the Chrome DevTools protocol
+in a self-owned profile under the state dir — the person's own browser is
+never attached to, typed into, or closed. `start {url?}` launches (or reuses)
+the instance and binds this session's own tab; `navigate`, `click` (a CSS
+selector's box center, or a page-viewport point), `type` (optional selector +
+`enter`), `screenshot`, `status`, and `stop` follow. Page screenshots return
+as inline images like screen captures do. `stop` closes this session's tab;
+the shared browser goes down when no tabs remain. Coordinates in this family
+are page-viewport pixels (`space: "page-viewport"`) — never screen points.
+Node 22+ is required for the WebSocket transport; older runtimes refuse with
+`unsupported_runtime`.
+
 This is background control of a local app, not an isolated desktop. Some apps,
 system dialogs, and workflows may still require foreground interaction. The
 opt-in `node scripts/verify-macos.mjs` test exercises a uniquely named TextEdit fixture (closed automatically afterward; add `--preview` to test the overlay),
@@ -369,8 +383,8 @@ with an upgrade error instead of sharing another client's input state.
 ## Frontier ability set
 
 The advertised surface is merged for context economy — `click`, `pointer`,
-`clipboard`, `recording`, `computer`, with `key {duration}` covering holds;
-`list_sessions` and `kill_app` ride alongside as themselves.
+`clipboard`, `recording`, `computer`, `browser`, with `key {duration}` covering
+holds; `list_sessions` and `kill_app` ride alongside as themselves.
 The per-action wire names (`left_click`, `read_clipboard`, `recording_start`,
 `computer_list`, `hold_key`, …) remain callable as aliases, so pinned hosts and
 receipts keep working; `tools/list` advertises the merged set only.

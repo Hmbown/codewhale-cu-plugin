@@ -205,6 +205,59 @@ export const TOOLS = [
     inputSchema: { type: "object", properties: { name: { type: "string" }, bundle_id: { type: "string" }, pid: { type: "integer" }, force: { type: "boolean", description: "force-quit when the graceful quit does not complete" }, computer: computerParam }, additionalProperties: false },
   },
   {
+    name: "browser",
+    description: "Drive a Chromium-family browser over the DevTools protocol — exact element addressing instead of pixel clicking, in a self-owned profile (the user's own browser is never touched). Actions: start {url?} | status | navigate {url} | click {selector | point} | type {text, selector?, enter?} | screenshot {full?} | stop. Elements are CSS selectors; coordinates are page-viewport pixels from screenshot (never screen points). One tab per session; the last session out closes the browser.",
+    inputSchema: {
+      type: "object", required: ["action"],
+      properties: {
+        action: { enum: ["start", "status", "navigate", "click", "type", "screenshot", "stop"] },
+        url: { type: "string", description: "http(s):// or about:blank (start, navigate)" },
+        selector: { type: "string", description: "CSS selector (click, or type focus)" },
+        point: { type: "object", properties: { x: { type: "number" }, y: { type: "number" } }, required: ["x", "y"], additionalProperties: false, description: "page-viewport pixels — the browser screenshot space, never screen points" },
+        text: { type: "string", description: "text to insert (type)" },
+        enter: { type: "boolean", description: "press Enter after typing" },
+        full: { type: "boolean", description: "capture the full page, not just the viewport" },
+        computer: computerParam,
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "browser_start",
+    description: "Launch or reuse the self-owned Chromium profile and open this session's tab. The user's own browser is never touched.",
+    inputSchema: { type: "object", properties: { url: { type: "string", description: "optional http(s) URL to open" }, computer: computerParam }, additionalProperties: false },
+  },
+  {
+    name: "browser_status",
+    description: "Read the browser session: running, tabs, and the active tab's url/title.",
+    inputSchema: { type: "object", properties: { computer: computerParam }, additionalProperties: false },
+  },
+  {
+    name: "browser_navigate",
+    description: "Navigate this session's tab to an http(s) or about:blank URL and wait for load.",
+    inputSchema: { type: "object", required: ["url"], properties: { url: { type: "string" }, computer: computerParam }, additionalProperties: false },
+  },
+  {
+    name: "browser_click",
+    description: "Click in the page: a CSS selector's box center, or a page-viewport point.",
+    inputSchema: { type: "object", properties: { selector: { type: "string" }, point: { type: "object", properties: { x: { type: "number" }, y: { type: "number" } }, required: ["x", "y"], additionalProperties: false }, computer: computerParam }, additionalProperties: false },
+  },
+  {
+    name: "browser_type",
+    description: "Insert text into the page (optionally focusing a CSS selector first); enter:true presses Enter.",
+    inputSchema: { type: "object", required: ["text"], properties: { text: { type: "string" }, selector: { type: "string" }, enter: { type: "boolean" }, computer: computerParam }, additionalProperties: false },
+  },
+  {
+    name: "browser_screenshot",
+    description: "Capture the page (viewport, or the full page with full:true) as a PNG in the recordings dir.",
+    inputSchema: { type: "object", properties: { full: { type: "boolean" }, computer: computerParam }, additionalProperties: false },
+  },
+  {
+    name: "browser_stop",
+    description: "Close this session's tab; the shared browser closes when no tabs remain.",
+    inputSchema: { type: "object", properties: { computer: computerParam }, additionalProperties: false },
+  },
+  {
     name: "open_application",
     description: "Launch or activate an application. Copy user-provided names character-for-character; never translate, normalize, or strip suffixes. On macOS prefer bundle_id when known.",
     inputSchema: {
@@ -427,13 +480,14 @@ export const ELEMENT_ONLY_TARGET = new Set(["set_value", "select_text", "perform
 /** Tools that never touch a computer (available even after kill switch). */
 export const READ_ONLY_TOOLS = new Set([
   "computer_list", "stop_computer_control", "wait", "request_access", "recording_list", "recording_status",
-  "find_elements", "get_value", "list_sessions",
+  "find_elements", "get_value", "list_sessions", "browser_status",
 ]);
 
 /** Tools dispatchable to a remote agent over ssh (allow-list must match agent.mjs). */
 export const REMOTE_TOOLS = new Set([
   "preview", "probe", "list_displays", "switch_display", "list_apps", "list_sessions", "list_windows",
   "open_application", "kill_app", "get_app_state", "resolve_element", "screenshot", "zoom",
+  "browser_start", "browser_status", "browser_navigate", "browser_click", "browser_type", "browser_screenshot", "browser_stop",
   "left_click", "double_click", "triple_click", "right_click", "middle_click",
   "mouse_move", "left_click_drag", "left_mouse_down", "left_mouse_up", "scroll",
   "type", "key", "hold_key", "set_value", "focus", "get_value", "select_text", "perform_action", "invoke_menu",
@@ -496,6 +550,14 @@ const TOOL_ANNOTATIONS = {
   // Merged surface (aliases keep the wire names above callable).
   click: INPUT_ANNOTATION,
   pointer: INPUT_ANNOTATION,
+  browser: INPUT_ANNOTATION,
+  browser_status: READ_ONLY_ANNOTATION,
+  browser_screenshot: READ_ONLY_ANNOTATION,
+  browser_start: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  browser_stop: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  browser_navigate: INPUT_ANNOTATION,
+  browser_click: INPUT_ANNOTATION,
+  browser_type: INPUT_ANNOTATION,
   clipboard: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
   recording: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
   computer: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
@@ -516,6 +578,7 @@ const HIDDEN_FROM_LIST = new Set([
   "recording_start", "recording_stop", "recording_status", "recording_list",
   "computer_list", "computer_switch", "computer_register", "computer_remove",
   "hold_key",
+  "browser_start", "browser_status", "browser_navigate", "browser_click", "browser_type", "browser_screenshot", "browser_stop",
 ]);
 for (const tool of TOOLS) {
   if (HIDDEN_FROM_LIST.has(tool.name)) tool.hidden = true;
@@ -590,6 +653,35 @@ export function resolveTool(name, args = {}) {
       if (repeat != null || target != null) throw bad("key with duration holds the key — repeat and target cannot be combined with it");
       if (!Number.isFinite(duration) || duration < 0.05 || duration > 30) throw bad("duration must be 0.05..30 seconds");
       return { name: "hold_key", args: { ...rest, duration } };
+    }
+    case "browser": {
+      const rest = { ...args };
+      delete rest.action;
+      switch (args.action) {
+        case "start":
+          if (rest.url != null && typeof rest.url !== "string") throw bad("browser start url must be a string");
+          return { name: "browser_start", args: rest };
+        case "status": return { name: "browser_status", args: rest };
+        case "navigate":
+          if (typeof rest.url !== "string" || !rest.url.trim()) throw bad('browser action "navigate" requires url');
+          return { name: "browser_navigate", args: rest };
+        case "click": {
+          const hasSelector = typeof rest.selector === "string" && rest.selector.trim();
+          const hasPoint = rest.point != null && Number.isFinite(rest.point?.x) && Number.isFinite(rest.point?.y);
+          if (hasSelector && hasPoint) throw bad('browser action "click" takes selector or point, not both — pick one target');
+          if (!hasSelector && !hasPoint) throw bad('browser action "click" needs selector (CSS) or point {x,y}');
+          if (!hasSelector) delete rest.selector;
+          if (!hasPoint) delete rest.point;
+          return { name: "browser_click", args: rest };
+        }
+        case "type":
+          if (typeof rest.text !== "string" || !rest.text.length) throw bad('browser action "type" requires text');
+          return { name: "browser_type", args: rest };
+        case "screenshot": return { name: "browser_screenshot", args: rest };
+        case "stop": return { name: "browser_stop", args: rest };
+        default:
+          throw bad(`browser action must be start, status, navigate, click, type, screenshot or stop (got ${JSON.stringify(args.action)})`);
+      }
     }
     default:
       return { name, args };

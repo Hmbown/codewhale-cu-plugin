@@ -1,5 +1,33 @@
 # Release notes
 
+## 0.7.2 — browser control over CDP
+
+The capability axis we did not have: a Chromium-family browser driven over the
+DevTools protocol, in a **self-owned profile** (`state/browser/profile`) with
+one tab per session. The user's own browser — profile, tabs, logins — is never
+attached to and never touched; the last session out closes the shared browser.
+No screen coordinates and no accessibility are involved: elements are CSS
+selectors through the DOM domain, and coordinate clicks are page-viewport
+pixels — a space named differently from screen points so the two can never be
+confused.
+
+One advertised tool (`browser`, 33 -> 34) with actions `start | status |
+navigate | click | type | screenshot | stop`; the seven wire names stay
+callable and hidden. Page screenshots come back as inline images through the
+same single-message budget guard as screen captures. Wired into all three
+desktop backends (CDP is OS-independent) and the ssh transport. Node needs a
+global WebSocket (22+); older runtimes refuse with `unsupported_runtime`
+instead of half-working.
+
+Verification: `npm test` 321 tests — 306 pass / 0 fail / 15 platform-skipped
+(14 new: scripted-CDP unit coverage for every action, launch-tab adoption,
+busy-instance tab creation, live-endpoint reuse, stale-port replacement,
+last-one-out close, url refusals). Live smoke against the installed bundle:
+real Chrome launched in its own profile, fixture-page click and type verified
+by the page's own title, page screenshot inlined as an image, `stop` closed
+the tab and the browser while the user's own Chrome was untouched — 20/20
+(receipts in /tmp/cu-smoke-072).
+
 ## 0.7.1 — live preview, session visibility, kill_app; dogfood fixes
 
 Straight out of the 2026-09-17 live dogfooding of 0.7.0 on a real Mac (a

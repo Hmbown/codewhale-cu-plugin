@@ -12,6 +12,7 @@ import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
 import { run, runOk, ExecError, tryJson, have, withSignal, wait, throwIfAborted, currentSignal } from "../exec.mjs";
 import { stateDir } from "../registry.mjs";
+import { createBrowser } from "../browser-cdp.mjs";
 
 /** Base64 expands 3 bytes to 4, padded to a multiple of 4. */
 const encodedSize = (bytes) => Math.ceil(bytes / 3) * 4;
@@ -169,6 +170,7 @@ export function create({ exec }) {
   // A hide must not race an in-flight capture: its late preview_notify would
   // re-show a panel that was just dismissed.
   async function quiescePreview() { for (let i = 0; i < 20 && previewBusy; i++) await wait(25); }
+  const browser = createBrowser();
   function startPreviewLoop() {
     if (previewLoop) return;
     const ms = Number(process.env.CODEWHALE_CU_PREVIEW_REFRESH_MS ?? 1000);
@@ -635,6 +637,7 @@ export function create({ exec }) {
       try { await native("preview_notify", { enabled: false }); } catch { /* hiding is best-effort */ }
     }
     state.previewEnabled = false;
+    await browser.close().catch(() => {});
     const owned = [...rec.entries()];
     for (const [, recording] of owned) requestRecordingStop(recording);
     const results = await Promise.all(owned.map(async ([id, recording]) => {
@@ -1104,6 +1107,13 @@ export function create({ exec }) {
       if (!name && !bundle_id && pid == null) throw Object.assign(new ExecError("kill_app needs name, bundle_id or pid"), { code: "bad_args" });
       return native("kill_app", { name, bundle_id, pid, force: force === true });
     },
+    browser_start: browser.start,
+    browser_status: browser.status,
+    browser_navigate: browser.navigate,
+    browser_click: browser.click,
+    browser_type: browser.type,
+    browser_screenshot: browser.screenshot,
+    browser_stop: browser.stop,
     releaseInput: async () => {
       if (!state.pointerLease) return;
       try { await withSignal(null, () => state.pointerLease.release({ point: state.pointer })); }

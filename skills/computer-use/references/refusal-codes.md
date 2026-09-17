@@ -30,6 +30,10 @@ Never retry a refusal unchanged — re-observe, re-target, or change route.
 | `app_not_found` | selector missed — `open_application` names/bundle ids that resolve nowhere and dead pids report it too | `list_apps` (or `all:true`) for exact names/pids |
 | `ambiguous_application` | `kill_app` name matched several running apps | pass `pid` to choose one |
 | `protected_application` | the target is the Computer Use helper or its host | name the intended app instead; these cannot be terminated through the plugin |
+| `browser_not_running` | browser action before `browser {action:"start"}` (or the browser went away) | start it; a closed CDP connection clears the session state |
+| `browser_not_installed` | no Chromium-family browser found | install one, or set `CODEWHALE_CU_BROWSER_APP` to the app path |
+| `selector_not_found` | no element matches the CSS selector on the current page | re-check the selector against a fresh `browser {action:"screenshot"}` or `browser {action:"status"}` |
+| `unsupported_runtime` | this Node has no global WebSocket (browser transport) | use Node 22+ for the daemon/server running the plugin |
 | `app_upgrade_required` | the helper predates the feature or is not running | restart/update the Codewhale Computer Use app |
 | `unsupported_on_backend` | tool not implemented on that platform backend | check the platform note in the main skill |
 | `permission` / `permissions_denied` | a grant is missing | name the permission and the Settings pane, then stop |

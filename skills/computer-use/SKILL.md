@@ -219,6 +219,21 @@ snapshot-series (no native CLI recorder —
 the receipt says so). `recording_status` / `recording_list` report bytes and
 paths. Screenshots land in the same directory.
 
+## Browser (CDP)
+
+`browser` drives a Chromium-family browser over the DevTools protocol in a
+self-owned profile — the user's own browser is never attached to, typed into,
+or closed. `start` opens (or reuses) the instance and binds this session's
+own tab; then `navigate`, `click` (CSS selector or viewport point), `type`
+(optional focus selector, `enter`), `screenshot`, `status`, `stop`. Elements
+are addressed exactly, no pixels: prefer this over screen clicking for web
+work. Page screenshots are a different space from screen captures
+(`space: "page-viewport"`) — coordinate clicks take that space, never screen
+points. Verify effects by observing: `status` reports the tab's live url and
+title, and a fresh `screenshot` shows the rendered truth. One tab per
+session; the last session out closes the shared browser. Node 22+ is needed
+for the WebSocket transport; older runtimes refuse with `unsupported_runtime`.
+
 ## Safety
 
 - `stop_computer_control` is the kill switch; after it, actions fail closed

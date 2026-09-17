@@ -35,6 +35,14 @@ receipt is JSON: `ok`, plus what was sent. Verify effects by observing.
 - `computer {action, id?}` — list / switch / register / remove.
 - `recording {action, …}` — start / stop / status / list (opt-in screen recordings).
 
+## Browser (CDP)
+- `browser {action:"start", url?}` — self-owned Chromium profile + this session's tab; the user's own browser is never touched.
+- `browser {action:"navigate", url}` — http(s) or about:blank; waits for load (`verified`).
+- `browser {action:"click", selector | point}` — CSS selector's box center, or page-viewport pixels from a browser screenshot.
+- `browser {action:"type", text, selector?, enter?}` — inserts text (unicode), optional focus selector and Enter.
+- `browser {action:"screenshot", full?}` — page PNG (inline image); viewport is the click-point space.
+- `browser {action:"status"}` · `browser {action:"stop"}` — tabs/active tab; close this session's tab (last one out closes the browser).
+
 ## Session
 - `list_sessions` — live sessions on this machine (content-free) and the user's control mode.
 - `stop_computer_control {reason?}` — kill switch; input for this session ends.
@@ -51,6 +59,13 @@ Close a window without borrowing focus:
 1. Press the window's close-button element (`click` on the window's
    `AXButton`), or use `key cmd+w` (which borrows focus briefly and says so:
    `front_lease` / `front_restored`).
+
+Fill and submit a web form (CDP, no pixels):
+1. `browser {action:"start", url:"https://…"}`
+2. `browser {action:"type", selector:"#email", text:"…"}`
+3. `browser {action:"click", selector:"button[type=submit]"}`
+4. Verify with `browser {action:"status"}` (url/title) or a fresh
+   `browser {action:"screenshot"}` — never assume the click landed.
 2. `list_windows` → window gone
 
 > `invoke_menu` is exact for app-level commands (New, Save, Quit).

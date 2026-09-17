@@ -60,17 +60,30 @@ test("key with duration routes to hold semantics; conflicts are bad_args", () =>
   assert.throws(() => resolveTool("key", { text: "a", duration: 99 }), /0.05..30/);
 });
 
+test("browser actions expand to their wire tools; misuse fails as bad_args naming browser", () => {
+  assert.deepEqual(resolveTool("browser", { action: "status" }), { name: "browser_status", args: {} });
+  assert.deepEqual(resolveTool("browser", { action: "navigate", url: "https://a.test" }), { name: "browser_navigate", args: { url: "https://a.test" } });
+  assert.deepEqual(resolveTool("browser", { action: "click", selector: "#x" }), { name: "browser_click", args: { selector: "#x" } });
+  assert.throws(() => resolveTool("browser", { action: "click", selector: "#x", point: { x: 1, y: 2 } }), (e) => e.code === "bad_args" && /not both/.test(e.message));
+  assert.deepEqual(resolveTool("browser", { action: "type", text: "hi", enter: true }), { name: "browser_type", args: { text: "hi", enter: true } });
+  assert.throws(() => resolveTool("browser", { action: "navigate" }), (e) => e.code === "bad_args" && /requires url/.test(e.message));
+  assert.throws(() => resolveTool("browser", { action: "click" }), (e) => e.code === "bad_args" && /needs selector/.test(e.message));
+  assert.throws(() => resolveTool("browser", { action: "type" }), (e) => e.code === "bad_args" && /requires text/.test(e.message));
+  assert.throws(() => resolveTool("browser", { action: "fly" }), (e) => e.code === "bad_args" && /browser action must be start, status, navigate/.test(e.message));
+});
+
 test("the advertised list is the merged surface; aliases are not listed", () => {
   const advertised = TOOLS.filter((t) => t.hidden !== true).map((t) => t.name);
   const hidden = TOOLS.filter((t) => t.hidden === true).map((t) => t.name);
-  assert.equal(advertised.length, 33, `advertised surface is ${advertised.length}`);
-  assert.equal(hidden.length, 19, `hidden aliases are ${hidden.length}`);
-  for (const merged of ["click", "pointer", "clipboard", "recording", "computer"]) assert.ok(advertised.includes(merged), merged);
+  assert.equal(advertised.length, 34, `advertised surface is ${advertised.length}`);
+  assert.equal(hidden.length, 26, `hidden aliases are ${hidden.length}`);
+  for (const merged of ["click", "pointer", "clipboard", "recording", "computer", "browser"]) assert.ok(advertised.includes(merged), merged);
   for (const straight of ["list_sessions", "kill_app"]) assert.ok(advertised.includes(straight), straight);
   for (const gone of ["left_click", "double_click", "triple_click", "right_click", "middle_click", "mouse_move",
     "left_mouse_down", "left_mouse_up", "read_clipboard", "write_clipboard",
     "recording_start", "recording_stop", "recording_status", "recording_list",
-    "computer_list", "computer_switch", "computer_register", "computer_remove", "hold_key"]) {
+    "computer_list", "computer_switch", "computer_register", "computer_remove", "hold_key",
+    "browser_start", "browser_status", "browser_navigate", "browser_click", "browser_type", "browser_screenshot", "browser_stop"]) {
     assert.ok(!advertised.includes(gone), `${gone} must not be advertised`);
     assert.ok(TOOL_NAMES.has(gone), `${gone} must stay callable as an alias`);
   }
@@ -122,9 +135,9 @@ after(() => { try { server.stdin.end(); } catch {} server?.kill("SIGTERM"); });
 test("tools/list serves exactly the advertised union, validated shapes included", async () => {
   const res = await rpc("tools/list", {});
   const names = res.result.tools.map((t) => t.name);
-  assert.equal(names.length, 33);
+  assert.equal(names.length, 34);
   assert.ok(names.includes("click") && names.includes("pointer") && names.includes("clipboard") && names.includes("recording") && names.includes("computer"));
-  assert.ok(names.includes("list_sessions") && names.includes("kill_app"));
+  assert.ok(names.includes("list_sessions") && names.includes("kill_app") && names.includes("browser"));
   assert.ok(!names.includes("left_click") && !names.includes("hold_key") && !names.includes("read_clipboard"));
 });
 
