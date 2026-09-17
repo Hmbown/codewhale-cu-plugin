@@ -7,7 +7,7 @@ import fs from "node:fs";
 import crypto from "node:crypto";
 import * as registry from "../src/registry.mjs";
 import { backendFor, installRemoteAgent, executorFor, closeAppSession, routeFingerprint, closeSshChannel } from "../src/transport.mjs";
-import { TOOLS, TOOL_NAMES, REQUIRED_ARGS, ELEMENT_ONLY_TARGET, READ_ONLY_TOOLS, REMOTE_TOOLS, BACKEND_METHOD } from "../src/tools.mjs";
+import { TOOLS, TOOL_NAMES, REQUIRED_ARGS, ELEMENT_ONLY_TARGET, READ_ONLY_TOOLS, REMOTE_TOOLS, BACKEND_METHOD, resolveTool } from "../src/tools.mjs";
 import { tryJson, withSignal, throwIfAborted, wait } from "../src/exec.mjs";
 import { APP_VERSION } from "../src/app-socket.mjs";
 
@@ -440,17 +440,28 @@ async function waitFor(computer, args, switched) {
 
 // ---------- tool dispatch ----------
 async function callTool(params) {
-  const name = params.name;
-  if (!TOOL_NAMES.has(name)) {
-    return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: { code: "unknown_tool", message: `unknown tool "${name}"` } }) }], isError: true };
+  const requested = params.name;
+  if (!TOOL_NAMES.has(requested)) {
+    return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: { code: "unknown_tool", message: `unknown tool "${requested}"` } }) }], isError: true };
   }
+  // Merged tools (click, pointer, clipboard, recording, computer, key+duration)
+  // resolve to the wire tool they dispatch to before any gate below, so they
+  // cannot bypass required args, the kill switch or routing. Wire names stay
+  // callable as aliases.
+  let name = requested;
   let args = params.arguments ?? {};
+  try {
+    ({ name, args } = resolveTool(requested, args));
+  } catch (err) {
+    return { content: [{ type: "text", text: JSON.stringify(fail(null, err.code ?? "bad_args", err.message)) }], isError: true };
+  }
   // Hosts are not required to enforce inputSchema. Check declared `required`
   // fields here so a missing argument becomes bad_args instead of a backend
-  // crash or an opaque native error.
+  // crash or an opaque native error. The message names the tool the caller
+  // asked for, not the wire name it resolved to.
   for (const field of REQUIRED_ARGS.get(name) ?? []) {
     if (args[field] === undefined || args[field] === null) {
-      return { content: [{ type: "text", text: JSON.stringify(fail(null, "bad_args", `${name} requires "${field}"`)) }], isError: true };
+      return { content: [{ type: "text", text: JSON.stringify(fail(null, "bad_args", `${requested} requires "${field}"`)) }], isError: true };
     }
   }
 
@@ -906,7 +917,9 @@ const HANDLERS = {
     };
   },
   "tools/list"() {
-    return { tools: TOOLS };
+    // The advertised surface is what every session pays for; merged-away wire
+    // names stay callable as aliases but are never listed.
+    return { tools: TOOLS.filter((t) => t.hidden !== true) };
   },
   "resources/list"() {
     return { resources: skillPack.map(({ uri, rel, mime, size }) => ({ uri, name: rel, mimeType: mime, size })) };

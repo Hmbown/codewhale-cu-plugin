@@ -7,7 +7,7 @@ description: Desktop control with accessibility-first observation and actions, p
 
 ## Computers first
 
-The plugin controls **computers**, not "the screen". `computer_list` shows the
+The plugin controls **computers**, not "the screen". `computer {action:"list"}` shows the
 registry; one computer is always **active**, and every tool acts on the active
 computer unless given `computer`.
 
@@ -139,7 +139,7 @@ Observe once, act once, then verify.
     available; verify the resulting value. `get_app_state`, `list_windows`
     and `screenshot` default to the selected app.
   - **Background mode never moves the user's cursor.** A coordinate
-    `left_click` first tries the bound application's accessibility action,
+    `click` first tries the bound application's accessibility action,
     including focusing a field that is not AXPressable. `right_click` uses
     advertised context-menu actions. `scroll` uses the target's accessibility
     scrollbar; prefer a scroll-area element and read the receipt's unit and
@@ -202,7 +202,7 @@ Observe once, act once, then verify.
 
 - macOS uses `cmd` (`cmd+c`), Linux/Windows use `ctrl` (`ctrl+c`).
 - `key` is the key-press tool: `return`, `enter`, `backspace`, `tab`,
-  `escape`, chords and repeats. `hold_key` holds for a duration.
+  `escape`, chords and repeats. `key {duration}` holds a key for a duration.
 - `type` sends unicode. Newlines and `press_enter` become Return; they do
   not insert a literal line break or U+FFFC.
 - Prefer `set_value` on ordinary fields; prefer `focus` then `type`/`key`
@@ -210,7 +210,7 @@ Observe once, act once, then verify.
 
 ## Recording
 
-`recording_start` → work → `recording_stop` returns the finalized file path.
+`recording {action:"start"}` → work → `recording {action:"stop", id}` returns the finalized file path.
 macOS uses ScreenCaptureKit inside the signed helper — no system recorder UI
 and no desktop dimming overlay (a receipt warning about Screen Recording
 permission means the user must grant it once). Linux and Windows recording is
@@ -234,16 +234,21 @@ paths. Screenshots land in the same directory.
   empty capture means Screen Recording permission is missing (macOS) for the
   app (`via: "app"`) or the host terminal (`via: "direct"`): say which and
   stop.
-- **Record** — `recording_start` (parse computer id, fps, display, duration
+- **Record** — `recording {action:"start"}` (parse computer id, fps, display, duration
   or "record for 30s" → `durationSec` on macOS), then report id, path, mode.
-  To stop, find the running id via `recording_list` and call `recording_stop`.
-- **Switch computers** — `computer_list`; if asked to add: ssh `user@host`
+  To stop, find the running id via `recording {action:"list"}` and call `recording {action:"stop", id}`.
+- **Switch computers** — `computer {action:"list"}`; if asked to add: ssh `user@host`
   (agent is pushed automatically) or `hdc [target]` for a HarmonyOS device;
   otherwise show the registry and remind that any tool accepts `computer`.
-- **Status** — `computer_list`, then `request_access` per computer; call out
+- **Status** — `computer {action:"list"}`, then `request_access` per computer; call out
   anything that will fail closed with the exact install hint from the receipt.
 
 ## References
+
+The advertised tools are merged for context economy — `click`, `pointer`,
+`clipboard`, `recording`, `computer`, and `key {duration}` for holds. The
+per-action wire names (`left_click`, `read_clipboard`, `recording_start`,
+`computer_list`, `hold_key`, …) remain callable as aliases.
 
 - `references/quick-reference.md` — every tool on one page, plus the common
   recipes (type into a field, close a window without borrowing focus,

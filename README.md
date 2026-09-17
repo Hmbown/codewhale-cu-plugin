@@ -61,7 +61,7 @@ existing Engine authority before the model can use it.
 
 ## Verification status
 
-**Source (this snapshot).** `npm test` on macOS: 278 passed, 0 failed,
+**Source (this snapshot).** `npm test` on macOS: 286 passed, 0 failed,
 15 platform skips. The GitHub Actions workflow runs the same suite plus the
 receipt hygiene check on macOS and Ubuntu runners. Source tests exercise the
 protocol, routing, session and injected-runner paths; they perform no native
@@ -365,7 +365,14 @@ with an upgrade error instead of sharing another client's input state.
 
 ## Frontier ability set
 
-- **Observe & resolve** — `list_apps`, `list_windows`, `list_displays`,
+The advertised surface is merged for context economy — `click`, `pointer`,
+`clipboard`, `recording`, `computer`, with `key {duration}` covering holds.
+The per-action wire names (`left_click`, `read_clipboard`, `recording_start`,
+`computer_list`, `hold_key`, …) remain callable as aliases, so pinned hosts and
+receipts keep working; `tools/list` advertises the merged set only.
+
+- **Observe & resolve** — `list_apps` (regular apps by default; `all:true`
+  for helpers), `list_windows`, `list_displays`,
   `switch_display`, `get_app_state` (accessibility/UIA/uitest tree with
   element indices + `state_id`), `screenshot` (display/region, raster-bound
   coordinates), `zoom` (close-up crop of the last raster), `cursor_position`,
@@ -373,10 +380,11 @@ with an upgrade error instead of sharing another client's input state.
   permission/capability probe), `wait_for` (poll the accessibility tree
   until a query/role appears or disappears, then act on the fresh
   `state_id`).
-- **Pointer** — left/double/triple/right/middle click, move, drag,
-  down/up, scroll (4 directions).
-- **Keyboard & text** — `type` (unicode), `key` (chords + repeat),
-  `hold_key`, `set_value` (semantic, background-safe), `select_text`,
+- **Pointer** — `click` (left/double/triple/right/middle through
+  `button`/`clicks`), `pointer` (move/down/up), `left_click_drag`, `scroll`
+  (4 directions).
+- **Keyboard & text** — `type` (unicode), `key` (chords, `repeat`, or
+  `duration` to hold), `set_value` (semantic, background-safe), `select_text`,
   `perform_action` (element's own actions: AXPress / UIA Invoke / AT-SPI / uitest),
   `invoke_menu` (menu items by title path; accessibility only — no key events
   or focus lease; window-targeted items may need a key window).
@@ -385,9 +393,9 @@ with an upgrade error instead of sharing another client's input state.
   sha256 manifest) and as the `skills/computer-use/` pack in this repo; every
   tool advertises MCP annotations (readOnly / destructive / idempotent /
   openWorld) for host approval and sandbox policy.
-- **Recording** — `recording_start/stop/status/list` (see below).
-- **Computers** — `computer_list`, `computer_switch`, `computer_register`
-  (ssh agent auto-push), `computer_remove`.
+- **Recording** — `recording` (start/stop/status/list; see below).
+- **Computers** — `computer` (list/switch/register with ssh agent
+  auto-push/remove).
 - **Safety** — `stop_computer_control` kill switch; permission probes that
   name the missing grant; receipts on every call naming the computer it
   happened on.

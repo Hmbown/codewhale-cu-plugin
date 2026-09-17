@@ -45,6 +45,10 @@ export const TOOLS = [
   { name: "preview", description: "macOS: show or hide the nonactivating app preview with the drawn agent cursor. On by default while an app is bound — each action updates the captured window and cursor without moving the real pointer. Set enabled:false to mute it for the session.", inputSchema: { type: "object", properties: { enabled: { type: "boolean" }, computer: computerParam }, additionalProperties: false } },
   // ---- computers (switching is a default) ----
   {
+    name: "computer", description: "The computer registry. action list | switch | register | remove. switch/register/remove take `id`; register also takes transport (local|ssh|hdc) plus host/port/user/target/installAgent. Every other tool also accepts `computer` to switch stickily on use.",
+    inputSchema: { type: "object", required: ["action"], properties: { action: { enum: ["list", "switch", "register", "remove"] }, id: { type: "string", description: "Short id for the registered computer (letters, digits, dot, dash)" }, transport: { enum: ["local", "ssh", "hdc"] }, label: { type: "string" }, host: { type: "string", description: "ssh: hostname" }, port: { type: "integer", description: "ssh: port (default 22)" }, user: { type: "string", description: "ssh: user" }, target: { type: "string", description: "hdc: target key (omit for the only connected device)" }, installAgent: { type: "boolean", description: "ssh: push the remote agent before first use (default true)" } }, additionalProperties: false },
+  },
+  {
     name: "computer_list",
     description: "List registered computers (local, ssh, harmony/hdc) and which one is active. Every other tool acts on the active computer unless given `computer`.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
@@ -206,6 +210,14 @@ export const TOOLS = [
   },
   // ---- pointer ----
   {
+    name: "click", description: "Click a target: `button` left/right/middle (left default) and `clicks` 1..3 (left only). Element targets press that exact accessibility element; coordinate targets need a fresh raster. The per-action names (left_click, double_click, right_click, middle_click, triple_click) stay callable as aliases.",
+    inputSchema: { type: "object", required: ["target"], properties: { target: targetSchema, button: { enum: ["left", "right", "middle"], default: "left" }, clicks: { type: "integer", minimum: 1, maximum: 3, default: 1 }, strategy: strategyParam, computer: computerParam }, additionalProperties: false },
+  },
+  {
+    name: "pointer", description: "Raw pointer primitives: action \"move\" (hover without clicking), \"down\" (press and hold), \"up\" (release; target optional — releases at the last point). Background mode refuses these (shared pointer); they exist for explicit shared-desktop work.",
+    inputSchema: { type: "object", required: ["action"], properties: { action: { enum: ["move", "down", "up"] }, target: targetSchema, computer: computerParam }, additionalProperties: false },
+  },
+  {
     name: "left_click", description: "Left-click a coordinate (pixels in the latest raster) or perform the element's press action. macOS background mode presses via accessibility first; a point with no pressable element is delivered through the window-record route (genuine mouse events, cursor untouched, momentary no-raise front lease reported as front_lease).",
     inputSchema: { type: "object", required: ["target"], properties: { target: targetSchema, strategy: strategyParam, computer: computerParam }, additionalProperties: false },
   },
@@ -251,8 +263,8 @@ export const TOOLS = [
     inputSchema: { type: "object", required: ["text"], properties: { text: { type: "string" }, press_enter: { type: "boolean", description: "After typing, press Return/Enter once. Prefer this to putting a newline in `text` when you want to send." }, target: { ...elementTargetSchema, description: "Element target from get_app_state; it is accessibility-focused first, then the text is typed. Element targets only." }, computer: computerParam }, additionalProperties: false },
   },
   {
-    name: "key", description: "Press a named key or chord. Examples: return, enter, backspace, tab, escape, cmd+c (macOS), ctrl+c (Linux/Windows). This is the key-press tool; type() cannot send modifiers or Return by itself except via newlines/press_enter. Repeat with `repeat`. Pass an element `target` to accessibility-focus it first.",
-    inputSchema: { type: "object", required: ["text"], properties: { text: { type: "string" }, repeat: { type: "integer", minimum: 1, maximum: 100 }, target: { ...elementTargetSchema, description: "Element target from get_app_state; it is accessibility-focused first, then the key is sent. Element targets only." }, computer: computerParam }, additionalProperties: false },
+    name: "key", description: "Press a named key or chord. Examples: return, enter, backspace, tab, escape, cmd+c (macOS), ctrl+c (Linux/Windows). This is the key-press tool; type() cannot send modifiers or Return by itself except via newlines/press_enter. Repeat with `repeat`. Pass an element `target` to accessibility-focus it first. `duration` holds the key instead of tapping (hold_key semantics) and cannot be combined with repeat or target.",
+    inputSchema: { type: "object", required: ["text"], properties: { text: { type: "string" }, repeat: { type: "integer", minimum: 1, maximum: 100 }, duration: { type: "number", minimum: 0.05, maximum: 30, description: "Hold the key for this many seconds instead of tapping." }, target: { ...elementTargetSchema, description: "Element target from get_app_state; it is accessibility-focused first, then the key is sent. Element targets only." }, computer: computerParam }, additionalProperties: false },
   },
   {
     name: "hold_key", description: "Hold a key for `duration` seconds (0.05..30).",
@@ -331,6 +343,10 @@ export const TOOLS = [
   },
   // ---- clipboard / runtime ----
   {
+    name: "clipboard", description: "Read or write the system clipboard as UTF-8 text: action \"read\" or \"write\" (write requires text). This is the user's real clipboard — restore it when a round-trip is needed.",
+    inputSchema: { type: "object", required: ["action"], properties: { action: { enum: ["read", "write"] }, text: { type: "string" }, computer: computerParam }, additionalProperties: false },
+  },
+  {
     name: "read_clipboard", description: "Read the system clipboard as UTF-8 text.",
     inputSchema: { type: "object", properties: { computer: computerParam }, additionalProperties: false },
   },
@@ -339,6 +355,10 @@ export const TOOLS = [
     inputSchema: { type: "object", required: ["text"], properties: { text: { type: "string" }, computer: computerParam }, additionalProperties: false },
   },
   // ---- recording ----
+  {
+    name: "recording", description: "Screen recordings: action start | stop | status | list. `start` accepts display/fps/region/app_ref/window_id/durationSec/intervalMs; stop/status take the recording `id`; list reports what exists. Darwin records through ScreenCaptureKit; other platforms state their own limits in the receipt.",
+    inputSchema: { type: "object", required: ["action"], properties: { action: { enum: ["start", "stop", "status", "list"] }, id: { type: "string", description: "Recording id for stop/status" }, display: { type: "integer" }, fps: { type: "number" }, region: { type: "array", items: { type: "number" }, minItems: 4, maxItems: 4 }, app_ref: { type: "object", properties: { pid: { type: "integer" }, name: { type: "string" }, bundle_id: { type: "string" } }, additionalProperties: false }, window_id: { type: "integer" }, durationSec: { type: "number" }, intervalMs: { type: "integer" }, computer: computerParam }, additionalProperties: false },
+  },
   {
     name: "recording_start",
     description: "Start screen recording on a computer (mp4/mov). Darwin: ScreenCaptureKit via the native helper (timed or until recording_stop; honors region, no recorder overlay, stops on session exit). Pass app_ref to record only the selected app's window rect — captured at start and not tracked across moves. Linux and Windows: unavailable pending session-owned recorder cleanup; use screenshots. HarmonyOS: snapshot-series muxed with ffmpeg.",
@@ -461,7 +481,105 @@ const TOOL_ANNOTATIONS = {
   focus: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
   select_text: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
   write_clipboard: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
+  // Merged surface (aliases keep the wire names above callable).
+  click: INPUT_ANNOTATION,
+  pointer: INPUT_ANNOTATION,
+  clipboard: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
+  recording: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+  computer: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
 };
 for (const tool of TOOLS) {
   tool.annotations = TOOL_ANNOTATIONS[tool.name] ?? INPUT_ANNOTATION;
+}
+
+/**
+ * Merged-away names. They stay callable as aliases (receipts, pinned hosts and
+ * existing tests keep working) but never appear in tools/list — the advertised
+ * surface is what costs every session context.
+ */
+const HIDDEN_FROM_LIST = new Set([
+  "left_click", "double_click", "triple_click", "right_click", "middle_click",
+  "mouse_move", "left_mouse_down", "left_mouse_up",
+  "read_clipboard", "write_clipboard",
+  "recording_start", "recording_stop", "recording_status", "recording_list",
+  "computer_list", "computer_switch", "computer_register", "computer_remove",
+  "hold_key",
+]);
+for (const tool of TOOLS) {
+  if (HIDDEN_FROM_LIST.has(tool.name)) tool.hidden = true;
+}
+
+/**
+ * Expand a merged, advertised tool into the wire tool it dispatches to.
+ * Runs before every gate in the dispatcher (required args, kill switch,
+ * routing), so a merged call can never bypass one; validation that the wire
+ * schema cannot express (which action, what each action needs) lives here and
+ * fails as bad_args with the requested name. Unknown names pass through
+ * unchanged — the alias surface is the rest of TOOLS.
+ */
+export function resolveTool(name, args = {}) {
+  const bad = (message) => Object.assign(new Error(message), { code: "bad_args" });
+  switch (name) {
+    case "click": {
+      const button = args.button ?? "left";
+      const clicks = args.clicks ?? 1;
+      const rest = { ...args };
+      delete rest.button;
+      delete rest.clicks;
+      const wire = button === "left" && clicks === 1 ? "left_click"
+        : button === "left" && clicks === 2 ? "double_click"
+        : button === "left" && clicks === 3 ? "triple_click"
+        : button === "right" && clicks === 1 ? "right_click"
+        : button === "middle" && clicks === 1 ? "middle_click"
+        : null;
+      if (!wire) throw bad(`click supports left with 1-3 clicks, right x1 or middle x1 (got ${JSON.stringify(button)} x${clicks})`);
+      if (button !== "left") delete rest.strategy; // strategy is an a11y-left-click concept
+      return { name: wire, args: rest };
+    }
+    case "pointer": {
+      const rest = { ...args };
+      delete rest.action;
+      const wire = { move: "mouse_move", down: "left_mouse_down", up: "left_mouse_up" }[args.action];
+      if (!wire) throw bad(`pointer action must be "move", "down" or "up" (got ${JSON.stringify(args.action)})`);
+      return { name: wire, args: rest };
+    }
+    case "clipboard": {
+      const rest = { ...args };
+      delete rest.action;
+      if (args.action === "read") return { name: "read_clipboard", args: { computer: rest.computer } };
+      if (args.action === "write") {
+        if (typeof rest.text !== "string") throw bad("clipboard action \"write\" requires text");
+        return { name: "write_clipboard", args: { text: rest.text, computer: rest.computer } };
+      }
+      throw bad(`clipboard action must be "read" or "write" (got ${JSON.stringify(args.action)})`);
+    }
+    case "recording": {
+      const rest = { ...args };
+      delete rest.action;
+      const wire = { start: "recording_start", stop: "recording_stop", status: "recording_status", list: "recording_list" }[args.action];
+      if (!wire) throw bad(`recording action must be start, stop, status or list (got ${JSON.stringify(args.action)})`);
+      if ((args.action === "stop" || args.action === "status") && rest.id == null) throw bad(`recording action "${args.action}" requires id`);
+      return { name: wire, args: rest };
+    }
+    case "computer": {
+      const rest = { ...args };
+      delete rest.action;
+      const wire = { list: "computer_list", switch: "computer_switch", register: "computer_register", remove: "computer_remove" }[args.action];
+      if (!wire) throw bad(`computer action must be list, switch, register or remove (got ${JSON.stringify(args.action)})`);
+      if (args.action === "list") return { name: wire, args: {} };
+      if (rest.id == null) throw bad(`computer action "${args.action}" requires id`);
+      const id = rest.id;
+      delete rest.id;
+      return { name: wire, args: { ...rest, computer: id } };
+    }
+    case "key": {
+      if (args.duration == null) return { name, args };
+      const { duration, repeat, target, ...rest } = args;
+      if (repeat != null || target != null) throw bad("key with duration holds the key — repeat and target cannot be combined with it");
+      if (!Number.isFinite(duration) || duration < 0.05 || duration > 30) throw bad("duration must be 0.05..30 seconds");
+      return { name: "hold_key", args: { ...rest, duration } };
+    }
+    default:
+      return { name, args };
+  }
 }

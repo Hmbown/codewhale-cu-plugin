@@ -1,5 +1,30 @@
 # Release notes
 
+## 0.7.0 — merged advertised surface; wire names stay aliases
+
+`tools/list` advertises **31 tools instead of 45**. Every session pays for the
+schemas it loads, and six families said the same thing with different verbs:
+
+- **`click`** ← `left_click`, `double_click`, `triple_click`, `right_click`,
+  `middle_click` (`button`, `clicks`)
+- **`pointer`** ← `mouse_move`, `left_mouse_down`, `left_mouse_up`
+  (`action: move|down|up`)
+- **`clipboard`** ← `read_clipboard`, `write_clipboard` (`action: read|write`)
+- **`recording`** ← `recording_start/stop/status/list` (`action`)
+- **`computer`** ← `computer_list/switch/register/remove` (`action`, `id`)
+- **`key {duration}`** ← `hold_key`
+
+All 19 wire names remain callable as aliases: resolution runs before every gate
+(required args, kill switch, routing), so a merged call and its alias enforce
+identical policy, and `run_actions` steps accept either. Validation the wire
+schemas cannot express (which action, what each action requires) fails as
+`bad_args` naming the tool the caller asked for.
+
+Verification: `npm test` 301 tests — 286 pass / 0 fail / 15 platform-skipped
+(8 new in `tests/tool-merge.test.mjs`), including that a merged call and its
+wire alias produce identical refusals and that aliases never appear in
+`tools/list`.
+
 ## 0.6.2 — context diet, focus accounting, and a menu route
 
 - **The skill travels with the server.** The existing operating guide gains
