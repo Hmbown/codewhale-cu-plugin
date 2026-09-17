@@ -16,7 +16,7 @@ Never retry a refusal unchanged — re-observe, re-target, or change route.
 | `target_outside_raster` | coordinate outside the bound screenshot | take a fresh screenshot/zoom and use its pixels |
 | `no_raster` | coordinate target with no raster bound | `screenshot` first |
 | `window_blocked_by_modal_sheet` | an accessibility press would cross a sheet | deal with the sheet first |
-| `window_ambiguous` | the app has several windows and no `window_id` | `list_windows`, pick one, pass `window_id` |
+| `window_ambiguous` | two windows share the resolved window's frame (stacked or identical geometry) | `list_windows`, pick one, pass `window_id` (or re-target the press) |
 | `window_target_not_found` | PID has no eligible window | `list_windows`; open or pick the right app |
 
 ## Route and policy
@@ -27,7 +27,9 @@ Never retry a refusal unchanged — re-observe, re-target, or change route.
 | `background_scroll_unavailable` | no scrollbar at that point | target an observed scroll area |
 | `menu_item_not_found` | exact title not present (menus expose items only while open) | check the exact title; an ellipsis is part of it |
 | `menu_item_disabled` | item present but the app refuses it right now (often a missing key window) | use the window's own control element instead |
-| `app_not_found` | selector missed | `list_apps` (or `all:true`) for exact names/pids |
+| `app_not_found` | selector missed — `open_application` names/bundle ids that resolve nowhere and dead pids report it too | `list_apps` (or `all:true`) for exact names/pids |
+| `ambiguous_application` | `kill_app` name matched several running apps | pass `pid` to choose one |
+| `protected_application` | the target is the Computer Use helper or its host | name the intended app instead; these cannot be terminated through the plugin |
 | `app_upgrade_required` | the helper predates the feature or is not running | restart/update the Codewhale Computer Use app |
 | `unsupported_on_backend` | tool not implemented on that platform backend | check the platform note in the main skill |
 | `permission` / `permissions_denied` | a grant is missing | name the permission and the Settings pane, then stop |

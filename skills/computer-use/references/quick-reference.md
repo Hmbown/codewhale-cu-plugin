@@ -15,6 +15,7 @@ receipt is JSON: `ok`, plus what was sent. Verify effects by observing.
 - `zoom {region}` — magnify the last raster.
 - `get_value {target}` — read an element's value.
 - `cursor_position` — hardware pointer.
+- `list_sessions` — who is driving this machine: live sessions with bound targets, modes, and held pointers.
 - `clipboard {action:"read"}` — user clipboard text (ask before reading if unsure).
 
 ## Act
@@ -28,12 +29,14 @@ receipt is JSON: `ok`, plus what was sent. Verify effects by observing.
 - `pointer {action, target?}` — move/down/up primitives (foreground/shared only).
 
 ## Apps & computers
-- `open_application {name|bundle_id|pid, activate?}` — bind the input target.
-- `preview {enabled}` — floating panel: captured window + agent/user cursors.
+- `open_application {name|bundle_id|pid, activate?}` — bind the input target; `app_not_found` when the selector resolves nowhere.
+- `kill_app {name|bundle_id|pid, force?}` — quit an app; refuses an ambiguous name match (pass pid); never the helper itself.
+- `preview {enabled}` — floating panel: captured window + agent/user cursors; live while bound.
 - `computer {action, id?}` — list / switch / register / remove.
 - `recording {action, …}` — start / stop / status / list (opt-in screen recordings).
 
 ## Session
+- `list_sessions` — live sessions on this machine (content-free) and the user's control mode.
 - `stop_computer_control {reason?}` — kill switch; input for this session ends.
 
 ## Recipes

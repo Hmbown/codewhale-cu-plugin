@@ -17,7 +17,7 @@ import fs from "node:fs";
 import net from "node:net";
 import crypto from "node:crypto";
 import path from "node:path";
-import { handle, closeSession, closeAllSessions, releaseSessionInput, reopenSession, ALLOWED, controlStatus, setControlMode } from "../src/app-handler.mjs";
+import { handle, closeSession, closeAllSessions, releaseSessionInput, reopenSession, ALLOWED, controlStatus, setControlMode, summarizeSessions } from "../src/app-handler.mjs";
 import { runBackgroundCheck } from "./background-check.mjs";
 import { checkForUpdate, prepareUpdate, restartWithUpdate, readUpdateResult } from "./updates.mjs";
 import { APP_ID, APP_NAME, APP_VERSION, socketPath, runInfoPath, writeRegistration, defaultLaunch, hello } from "../src/app-socket.mjs";
@@ -177,6 +177,12 @@ async function serve(conn) {
           }
         } else if (!leases.has(req.sessionId) || leases.get(req.sessionId).token !== req.leaseToken) {
           reply = { ok: false, error: { code: "session_owner_required", message: "Computer request needs its live session owner lease; update or restart the MCP server" } };
+        } else if (req.tool === "list_sessions") {
+          // Content-free registry view over the live sessions. Available even
+          // when the user has paused or stopped other sessions: seeing who is
+          // driving is exactly what a model needs to explain machine state.
+          // Same envelope as every backend reply so the server reads `data`.
+          reply = { ok: true, platform: process.platform, tool: req.tool, data: summarizeSessions() };
         } else if (leases.get(req.sessionId).stopped && !["close_session", "release_session_input"].includes(req.tool)) {
           reply = { ok: false, error: { code: "control_stopped", message: "The user stopped this computer session. Start a new task after they allow control in the menu bar." } };
         } else if (["close_session", "release_session_input"].includes(req.tool)) {

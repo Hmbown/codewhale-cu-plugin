@@ -195,6 +195,16 @@ export const TOOLS = [
     inputSchema: { type: "object", properties: { computer: computerParam }, additionalProperties: false },
   },
   {
+    name: "list_sessions",
+    description: "List the live computer sessions on this machine: bound target, delivery mode, current action, idle age, and whether any session currently holds a pointer. Read-only and content-free (no task text is ever recorded). Use it to see who else — another model or agent — is driving the computer before you act.",
+    inputSchema: { type: "object", properties: { computer: computerParam }, additionalProperties: false },
+  },
+  {
+    name: "kill_app",
+    description: "Quit a running application by exact name, bundle_id or pid. Refuses when several running applications match (pass pid) and never terminates the Computer Use helper itself. force:true force-quits an unresponsive app — unsaved work is discarded.",
+    inputSchema: { type: "object", properties: { name: { type: "string" }, bundle_id: { type: "string" }, pid: { type: "integer" }, force: { type: "boolean", description: "force-quit when the graceful quit does not complete" }, computer: computerParam }, additionalProperties: false },
+  },
+  {
     name: "open_application",
     description: "Launch or activate an application. Copy user-provided names character-for-character; never translate, normalize, or strip suffixes. On macOS prefer bundle_id when known.",
     inputSchema: {
@@ -417,13 +427,13 @@ export const ELEMENT_ONLY_TARGET = new Set(["set_value", "select_text", "perform
 /** Tools that never touch a computer (available even after kill switch). */
 export const READ_ONLY_TOOLS = new Set([
   "computer_list", "stop_computer_control", "wait", "request_access", "recording_list", "recording_status",
-  "find_elements", "get_value",
+  "find_elements", "get_value", "list_sessions",
 ]);
 
 /** Tools dispatchable to a remote agent over ssh (allow-list must match agent.mjs). */
 export const REMOTE_TOOLS = new Set([
-  "preview", "probe", "list_displays", "switch_display", "list_apps", "list_windows",
-  "open_application", "get_app_state", "resolve_element", "screenshot", "zoom",
+  "preview", "probe", "list_displays", "switch_display", "list_apps", "list_sessions", "list_windows",
+  "open_application", "kill_app", "get_app_state", "resolve_element", "screenshot", "zoom",
   "left_click", "double_click", "triple_click", "right_click", "middle_click",
   "mouse_move", "left_click_drag", "left_mouse_down", "left_mouse_up", "scroll",
   "type", "key", "hold_key", "set_value", "focus", "get_value", "select_text", "perform_action", "invoke_menu",
@@ -454,6 +464,8 @@ const TOOL_ANNOTATIONS = {
   // Observation — reads only.
   request_access: READ_ONLY_ANNOTATION, computer_list: READ_ONLY_ANNOTATION, list_displays: READ_ONLY_ANNOTATION,
   list_apps: READ_ONLY_ANNOTATION, list_windows: READ_ONLY_ANNOTATION, wait_for: READ_ONLY_ANNOTATION,
+  list_sessions: READ_ONLY_ANNOTATION,
+  kill_app: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
   get_app_state: READ_ONLY_ANNOTATION, find_elements: READ_ONLY_ANNOTATION, get_value: READ_ONLY_ANNOTATION,
   screenshot: READ_ONLY_ANNOTATION, zoom: READ_ONLY_ANNOTATION, cursor_position: READ_ONLY_ANNOTATION,
   read_clipboard: READ_ONLY_ANNOTATION, recording_list: READ_ONLY_ANNOTATION, recording_status: READ_ONLY_ANNOTATION,

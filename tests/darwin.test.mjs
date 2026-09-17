@@ -697,6 +697,156 @@ test('macOS type passes the native verification receipt through untouched', asyn
   assert.ok(preview_error, 'preview refresh failure is reported, not swallowed');
 });
 
+// ---------- dogfood 2026-09-17: app_not_found, live preview, sessions, kill ----------
+
+const nap = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+function withEnv(t, vars) {
+  const old = {};
+  for (const [k, v] of Object.entries(vars)) {
+    old[k] = process.env[k];
+    if (v === undefined) delete process.env[k]; else process.env[k] = v;
+  }
+  t.after(() => { for (const [k, v] of Object.entries(old)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; } });
+}
+
+function fakeBundle(t) {
+  const bundle = fs.mkdtempSync(path.join(os.tmpdir(), 'cu-fake-bundle-'));
+  t.after(() => fs.rmSync(bundle, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(bundle, 'Contents', 'MacOS'), { recursive: true });
+  fs.writeFileSync(path.join(bundle, 'Contents', 'MacOS', 'accessibility'), '');
+  return bundle;
+}
+
+test('open_application on an unknown name, bundle or pid fails as app_not_found', async (t) => {
+  withEnv(t, { CODEWHALE_CU_APP_BUNDLE: fakeBundle(t) });
+  const backend = create({ exec: {
+    async run(cmd, args) {
+      if (cmd === 'open') {
+        const stderr = args.includes('-b')
+          ? 'LSCopyApplicationURLsForBundleIdentifier() failed while trying to determine the application with bundle identifier com.nonexistent.app.'
+          : "Unable to find application named 'NoSuchAppZZZ'";
+        return { code: 1, stderr, stdout: '' };
+      }
+      const request = JSON.parse(args[0]);
+      if (request.tool === 'app_info') {
+        const pid = request.args?.app_ref?.pid;
+        return pid
+          ? { code: 1, stderr: `no running application with pid ${pid}`, stdout: '' }
+          : { code: 1, stderr: 'application not found', stdout: '' };
+      }
+      return { code: 0, stderr: '', stdout: '{}' };
+    },
+    async runInputLease() { throw new Error('not used'); },
+  } });
+  await assert.rejects(backend.open_application({ name: 'NoSuchAppZZZ' }),
+    (e) => e.code === 'app_not_found' && /open failed: Unable to find application/.test(e.message),
+    'a name that resolves nowhere is app_not_found, not tool_error');
+  await assert.rejects(backend.open_application({ bundle_id: 'com.nonexistent.app' }),
+    (e) => e.code === 'app_not_found', 'a bundle id that resolves nowhere is app_not_found');
+  await assert.rejects(backend.open_application({ pid: 999999 }),
+    (e) => e.code === 'app_not_found', 'a dead pid is app_not_found');
+});
+
+test('preview goes live after a real capture; mute and session close tear it down', async (t) => {
+  withEnv(t, {
+    CODEWHALE_CU_APP_BUNDLE: fakeBundle(t),
+    CODEWHALE_CU_STATE_DIR: fs.mkdtempSync(path.join(os.tmpdir(), 'cu-preview-state-')),
+    CODEWHALE_CU_PREVIEW_REFRESH_MS: '60',
+  });
+  const calls = [];
+  const backend = create({ exec: {
+    async run(cmd, args) {
+      if (cmd === 'screencapture') {
+        fs.writeFileSync(args[args.length - 1], 'png');
+        calls.push({ tool: 'screencapture' });
+        return { code: 0, stderr: '', stdout: '' };
+      }
+      const request = JSON.parse(args[0]);
+      calls.push(request);
+      const body = request.tool === 'app_info' ? { found: true, pid: 123, bundle_id: 'test.app', name: 'TextEdit' }
+        : request.tool === 'window_info' ? { window_id: 9, name: 'TextEdit', points: { x: 0, y: 0, w: 100, h: 100 } }
+        : request.tool === 'cursor_position' ? { x: 1, y: 2 }
+        : { updated: true };
+      return { code: 0, stderr: '', stdout: JSON.stringify(body) };
+    },
+    async runInputLease() { throw new Error('not used'); },
+  } });
+  const captures = () => calls.filter((c) => c.tool === 'window_info').length;
+
+  await backend.open_application({ name: 'TextEdit' });
+  await nap(400);
+  const live = captures();
+  assert.ok(live >= 2, `the panel refreshes on a timer while bound (${live} captures)`);
+  assert.ok(calls.some((c) => c.tool === 'preview_notify' && c.args?.enabled === true), 'binding shows the panel');
+
+  await backend.preview({ enabled: false });
+  assert.ok(calls.some((c) => c.tool === 'preview_notify' && c.args?.enabled === false), 'mute hides the panel');
+  const muted = captures();
+  await nap(300);
+  assert.equal(captures(), muted, 'muting stops the refresh loop');
+
+  await backend.preview({ enabled: true });
+  await nap(300);
+  assert.ok(captures() > muted, 're-enabling restarts the loop');
+
+  await backend.closeSession();
+  assert.equal(calls.at(-1).tool, 'preview_notify');
+  assert.equal(calls.at(-1).args.enabled, false, 'session close hides the panel it showed');
+  const closed = captures();
+  await nap(300);
+  assert.equal(captures(), closed, 'session close stops the loop');
+});
+
+test('CODEWHALE_CU_PREVIEW_REFRESH_MS=0 keeps the panel a single frame', async (t) => {
+  withEnv(t, {
+    CODEWHALE_CU_APP_BUNDLE: fakeBundle(t),
+    CODEWHALE_CU_STATE_DIR: fs.mkdtempSync(path.join(os.tmpdir(), 'cu-preview-off-')),
+    CODEWHALE_CU_PREVIEW_REFRESH_MS: '0',
+  });
+  const calls = [];
+  const backend = create({ exec: {
+    async run(cmd, args) {
+      if (cmd === 'screencapture') { fs.writeFileSync(args[args.length - 1], 'png'); return { code: 0, stderr: '', stdout: '' }; }
+      const request = JSON.parse(args[0]);
+      calls.push(request);
+      const body = request.tool === 'app_info' ? { found: true, pid: 123, bundle_id: 'test.app', name: 'TextEdit' }
+        : request.tool === 'window_info' ? { window_id: 9, name: 'TextEdit', points: { x: 0, y: 0, w: 10, h: 10 } }
+        : request.tool === 'cursor_position' ? { x: 0, y: 0 }
+        : { updated: true };
+      return { code: 0, stderr: '', stdout: JSON.stringify(body) };
+    },
+    async runInputLease() { throw new Error('not used'); },
+  } });
+  await backend.open_application({ name: 'TextEdit' });
+  await nap(350);
+  assert.equal(calls.filter((c) => c.tool === 'window_info').length, 1, 'exactly the bind capture, no timer');
+});
+
+test('list_sessions in direct mode reports this process as the only session', async (t) => {
+  const { backend } = stubBackend(t, (r) => (r.tool === 'app_info' ? { found: true, pid: 321, bundle_id: 'test.app', name: 'TextEdit' } : null));
+  assert.equal((await backend.list_sessions()).sessions[0].target, null, 'unbound direct session has no target');
+  await backend.open_application({ name: 'TextEdit' });
+  const s = await backend.list_sessions();
+  assert.equal(s.via, 'direct');
+  assert.equal(s.count, 1);
+  assert.deepEqual(s.sessions[0].target, { pid: 321, bundle_id: 'test.app', name: 'TextEdit' });
+  assert.equal(s.sessions[0].mode, 'background');
+  assert.equal(s.sessions[0].inputHeld, false);
+});
+
+test('kill_app validates its identity client-side and passes the native receipt through', async (t) => {
+  const receipt = { killed: true, pid: 321, name: 'TextEdit', force_used: false };
+  const { backend, calls } = stubBackend(t, (r) => (r.tool === 'kill_app' ? receipt : null));
+  await assert.rejects(backend.kill_app({}), (e) => e.code === 'bad_args', 'an identity is required');
+  assert.deepEqual(await backend.kill_app({ pid: 321 }), receipt);
+  const sent = calls.filter((c) => c.tool === 'kill_app').at(-1);
+  assert.equal(sent.args.pid, 321);
+  assert.equal(sent.args.force, false, 'force defaults to a graceful quit');
+  await backend.kill_app({ name: 'TextEdit', force: true });
+  assert.equal(calls.filter((c) => c.tool === 'kill_app').at(-1).args.force, true, 'force passes through');
+});
+
 // A 1x1 PNG is enough: screenshot reads its IHDR for the pixel ground truth.
 const PNG_1X1 = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',

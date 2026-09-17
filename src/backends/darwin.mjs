@@ -11,6 +11,7 @@ import crypto from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
 import { run, runOk, ExecError, tryJson, have, withSignal, wait, throwIfAborted, currentSignal } from "../exec.mjs";
+import { stateDir } from "../registry.mjs";
 
 /** Base64 expands 3 bytes to 4, padded to a multiple of 4. */
 const encodedSize = (bytes) => Math.ceil(bytes / 3) * 4;
@@ -123,6 +124,8 @@ export function nativeErrorCode(message) {
   const m = String(message ?? "");
   if (/ambiguous/i.test(m)) return "window_ambiguous";
   if (/not capturable/i.test(m)) return "window_not_capturable";
+  if (/several running applications match/i.test(m)) return "ambiguous_application";
+  if (/cannot be terminated by this plugin/i.test(m)) return "protected_application";
   if (/no accessibility geometry/i.test(m)) return "window_target_not_found";
   if (/application not found|no running application/i.test(m)) return "app_not_found";
   return null;
@@ -155,7 +158,28 @@ export function create({ exec }) {
   // every action updates the floating capture and its drawn cursor so the
   // person can watch without the real pointer moving. `preview(enabled:false)`
   // mutes it for the session.
+  // The preview panel is live while a session is bound: after the first
+  // successful capture a timer keeps refreshing it, so the person watches the
+  // app instead of a frozen still. CODEWHALE_CU_PREVIEW_REFRESH_MS=0 disables
+  // the loop (tests, headless); the floor keeps a hostile value tolerable.
   const state = { activeDisplay: 1, lastRaster: null, inputApp: null, foregroundInput: false, previewEnabled: true, pointer: null, pointerLease: null };
+  let previewLoop = null;
+  let previewBusy = false;
+  function stopPreviewLoop() { if (previewLoop) { clearInterval(previewLoop); previewLoop = null; } }
+  // A hide must not race an in-flight capture: its late preview_notify would
+  // re-show a panel that was just dismissed.
+  async function quiescePreview() { for (let i = 0; i < 20 && previewBusy; i++) await wait(25); }
+  function startPreviewLoop() {
+    if (previewLoop) return;
+    const ms = Number(process.env.CODEWHALE_CU_PREVIEW_REFRESH_MS ?? 1000);
+    if (!Number.isFinite(ms) || ms <= 0) return;
+    previewLoop = setInterval(() => {
+      if (previewBusy || !state.previewEnabled || !state.inputApp) return;
+      previewBusy = true;
+      updatePreview(false).catch(() => {}).finally(() => { previewBusy = false; });
+    }, Math.max(50, ms));
+    previewLoop.unref?.();
+  }
 
   async function nativeHelper() {
     let helper = process.env.CODEWHALE_CU_APP_BUNDLE
@@ -239,7 +263,7 @@ export function create({ exec }) {
 
   async function updatePreview(show = false) {
     const win = await native("window_info", { app_ref: state.inputApp });
-    const dir = path.join(os.homedir(), ".codewhale-cu", "preview");
+    const dir = path.join(stateDir(), "preview");
     fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
     const temp = path.join(dir, "next.png"), file = path.join(dir, "latest.png");
     const r = await runL("screencapture", ["-x", "-o", "-l", String(win.window_id), "-t", "png", temp], { timeoutMs: 8000 });
@@ -253,6 +277,9 @@ export function create({ exec }) {
     await native("preview_notify", { enabled: true, show, title: `Codewhale · ${win.name} · ${state.foregroundInput ? "Shared desktop control" : "Background app control"}`, x: p ? (p.x-win.points.x)/win.points.w : -1, y: p ? (p.y-win.points.y)/win.points.h : -1,
       user_x: userCursor && Number.isFinite(userCursor.x) ? (userCursor.x-win.points.x)/win.points.w : -1,
       user_y: userCursor && Number.isFinite(userCursor.y) ? (userCursor.y-win.points.y)/win.points.h : -1 });
+    // Any successful capture (bind, explicit preview, action refresh) starts
+    // the live refresh; the tick itself re-enters this function as a no-op.
+    if (state.previewEnabled && state.inputApp) startPreviewLoop();
     return { enabled: true, file, app: state.inputApp, pointer: p };
   }
 
@@ -600,6 +627,14 @@ export function create({ exec }) {
   }
 
   async function closeSession() {
+    // The preview this session showed must not outlive the session; a panel
+    // from a dead session has no owner to refresh or hide it.
+    stopPreviewLoop();
+    await quiescePreview();
+    if (state.previewEnabled && state.inputApp) {
+      try { await native("preview_notify", { enabled: false }); } catch { /* hiding is best-effort */ }
+    }
+    state.previewEnabled = false;
     const owned = [...rec.entries()];
     for (const [, recording] of owned) requestRecordingStop(recording);
     const results = await Promise.all(owned.map(async ([id, recording]) => {
@@ -665,13 +700,20 @@ export function create({ exec }) {
       }
     }
     if (!p?.found) {
-      if (!name && !bid) throw new ExecError(`no running application with pid ${pid}; call list_apps for the current processes`);
+      if (!name && !bid) throw Object.assign(new ExecError(`no running application with pid ${pid}; call list_apps for the current processes`), { code: "app_not_found" });
       const args = [];
       if (urlArg) args.push(urlArg);
       if (bid) args.unshift("-b", bid); else args.unshift("-a", name);
       if (!activate) args.unshift("-g");
       const r = await runL("open", args, { timeoutMs: 25_000 });
-      if (r.code !== 0) throw new ExecError(`open failed: ${r.stderr.trim().slice(0, 200)}`, r);
+      if (r.code !== 0) {
+        const stderr = (r.stderr ?? "").trim();
+        // A name or bundle id that resolves nowhere is a stable refusal code,
+        // not a generic opener failure — agents branch on the code.
+        const code = /Unable to find application|failed while trying to determine the application/i.test(stderr)
+          ? "app_not_found" : undefined;
+        throw Object.assign(new ExecError(`open failed: ${stderr.slice(0, 200)}`), { code });
+      }
       await new Promise((res) => setTimeout(res, 600));
       p = await native("app_info", { app_ref: find, activate });
     }
@@ -679,11 +721,15 @@ export function create({ exec }) {
     if (p?.bundle_id === "net.codewhale.computer-use") throw Object.assign(new ExecError("The Computer Use setup and safety controls belong to the user and cannot be operated by this plugin."), { code: "protected_application" });
     // A bare executable has no bundle id; carrying an empty one would make the
     // identity unmatchable.
-    state.inputApp = { pid: p.pid, ...(p.bundle_id ? { bundle_id: p.bundle_id } : {}) };
+    state.inputApp = { pid: p.pid, ...(p.bundle_id ? { bundle_id: p.bundle_id } : {}), ...(p.name ? { name: p.name } : {}) };
     state.foregroundInput = !!activate;
     // Surface the watch panel on bind; a capture failure (e.g. missing Screen
-    // Recording) must never block the bind itself.
-    if (state.previewEnabled) updatePreview(true).catch(() => {});
+    // Recording) must never block the bind itself. The first successful
+    // capture also starts the refresh loop so the panel stays live while bound.
+    if (state.previewEnabled) {
+      previewBusy = true;
+      updatePreview(true).catch(() => {}).finally(() => { previewBusy = false; });
+    }
     return { launched: true, activate, keyboard_delivery: activate ? "foreground-guarded" : "process", input_scope: activate ? "shared-desktop" : "application", shared_pointer: !!activate, isolated_desktop: false, url: urlArg ?? null, resolved: p?.found ? { name: p.name, pid: p.pid, bundle_id: p.bundle_id, frontmost: p.frontmost } : null };
   }
 
@@ -824,7 +870,7 @@ export function create({ exec }) {
     },
     preview: async ({ enabled = true } = {}) => {
       state.previewEnabled = enabled;
-      if (!enabled) { await native("preview_notify", { enabled: false }); return { enabled: false }; }
+      if (!enabled) { stopPreviewLoop(); await quiescePreview(); await native("preview_notify", { enabled: false }); return { enabled: false }; }
       if (!state.inputApp) throw new ExecError("open_application first to choose the preview app");
       return updatePreview(true);
     },
@@ -1042,6 +1088,22 @@ export function create({ exec }) {
     recordingStatus,
     recordingList,
     closeSession,
+    list_sessions: async () => ({
+      via: "direct",
+      count: 1,
+      sessions: [{
+        target: state.inputApp ? { pid: state.inputApp.pid, ...(state.inputApp.bundle_id ? { bundle_id: state.inputApp.bundle_id } : {}), ...(state.inputApp.name ? { name: state.inputApp.name } : {}) } : null,
+        mode: state.foregroundInput ? "foreground" : "background",
+        action: null,
+        ageSec: 0,
+        inputHeld: !!state.pointerLease,
+      }],
+    }),
+    kill_app: async (args = {}) => {
+      const { name, bundle_id, pid, force } = args;
+      if (!name && !bundle_id && pid == null) throw Object.assign(new ExecError("kill_app needs name, bundle_id or pid"), { code: "bad_args" });
+      return native("kill_app", { name, bundle_id, pid, force: force === true });
+    },
     releaseInput: async () => {
       if (!state.pointerLease) return;
       try { await withSignal(null, () => state.pointerLease.release({ point: state.pointer })); }

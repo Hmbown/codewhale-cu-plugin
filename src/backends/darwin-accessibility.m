@@ -1053,6 +1053,39 @@ static id execute(NSDictionary *p) {
     }
     return @{@"found":@YES,@"name":a.localizedName?:@"",@"pid":@(a.processIdentifier),@"bundle_id":a.bundleIdentifier?:@"",@"frontmost":@(a.active)};
   }
+  if([tool isEqual:@"kill_app"]) {
+    NSString *bundle=args[@"bundle_id"], *name=args[@"name"]; NSNumber *pidNum=args[@"pid"];
+    if(!bundle && !name && !pidNum) @throw [NSException exceptionWithName:@"args" reason:@"kill_app needs name, bundle_id or pid" userInfo:nil];
+    if(pidNum && (![pidNum isKindOfClass:NSNumber.class] || [pidNum doubleValue]<=0 || [pidNum doubleValue]>INT_MAX || [pidNum doubleValue]!=[pidNum intValue])) @throw [NSException exceptionWithName:@"args" reason:@"kill_app pid must be a positive integer" userInfo:nil];
+    // A name that matches two running apps must not guess which one to end.
+    NSMutableArray *hits=[NSMutableArray array];
+    for(NSRunningApplication *a in NSWorkspace.sharedWorkspace.runningApplications) {
+      if(pidNum && a.processIdentifier!=[pidNum intValue]) continue;
+      if(bundle && !matchesName(a.bundleIdentifier?:@"",bundle)) continue;
+      if(name && !matchesName(a.localizedName?:@"",name)) continue;
+      [hits addObject:a];
+    }
+    if(!hits.count) @throw [NSException exceptionWithName:@"app" reason:@"application not found" userInfo:nil];
+    if(hits.count>1) {
+      NSMutableArray *desc=[NSMutableArray array];
+      for(NSRunningApplication *a in hits) [desc addObject:[NSString stringWithFormat:@"%@ (pid %d)",a.localizedName?:@"?",a.processIdentifier]];
+      @throw [NSException exceptionWithName:@"app" reason:[NSString stringWithFormat:@"several running applications match (%@); pass pid to choose one",[desc componentsJoinedByString:@", "]] userInfo:nil];
+    }
+    NSRunningApplication *target=hits[0];
+    pid_t tp=target.processIdentifier;
+    // The helper, its host (the daemon or MCP server), and the app bundle that
+    // owns this process must never be terminable through the agent surface.
+    if([(target.bundleIdentifier?:@"") isEqual:@"net.codewhale.computer-use"] || tp==getpid() || tp==getppid())
+      @throw [NSException exceptionWithName:@"protected" reason:@"the Computer Use helper and its host cannot be terminated by this plugin" userInfo:nil];
+    [target terminate];
+    for(int i=0;i<60 && !target.isTerminated;i++) { cuCheckCancelled(); [NSRunLoop.currentRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.05]]; }
+    BOOL forced=NO;
+    if(!target.isTerminated && [args[@"force"] boolValue]) {
+      [target forceTerminate]; forced=YES;
+      for(int i=0;i<40 && !target.isTerminated;i++) { cuCheckCancelled(); [NSRunLoop.currentRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.05]]; }
+    }
+    return @{@"killed":@(target.isTerminated),@"pid":@(tp),@"name":target.localizedName?:@"",@"force_used":@(forced)};
+  }
   NSRunningApplication *inputApp=nil;
   if([@[@"type",@"key_event",@"bg_key",@"mouse_event",@"scroll",@"hit_test",@"pointer_sequence",@"bg_pointer"] containsObject:tool]) {
     if(![args[@"input_app_ref"] isKindOfClass:NSDictionary.class]) @throw [NSException exceptionWithName:@"focus" reason:@"open_application first to bind the input destination" userInfo:nil];

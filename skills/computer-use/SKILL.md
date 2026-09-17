@@ -223,6 +223,10 @@ paths. Screenshots land in the same directory.
 
 - `stop_computer_control` is the kill switch; after it, actions fail closed
   for the session. Do not continue after it or after a denied permission.
+- `list_sessions` shows the live sessions and the user's control mode. When
+  another model or agent is mid-task on the same machine, coordinate through
+  the person instead of fighting for the same window; `kill_app` quits an app
+  (never the helper itself) and verifies the termination in its receipt.
 - Never retry a refused action unchanged. Re-observe, choose a fresh target.
 - If a permission is explicitly denied, tell the user which permission in
   which Settings pane, and end the turn. Do not promise later retries.

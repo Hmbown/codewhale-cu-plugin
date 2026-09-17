@@ -127,6 +127,27 @@ test("separate sessions keep their own bound apps and closed sessions cannot rev
   assert.equal((await b.remote({ tool: "type", args: { text: "still alive" } })).ok, true);
 });
 
+test("list_sessions names live sessions content-free and drops closed ones", async () => {
+  const a = appExec({}, "ls-a");
+  const b = appExec({}, "ls-b");
+  await a.remote({ tool: "probe" });
+  await b.remote({ tool: "probe" });
+  const both = await a.remote({ tool: "list_sessions" });
+  assert.equal(both.ok, true);
+  assert.equal(both.data.control, "ready");
+  assert.ok(both.data.count >= 2, `both live sessions are listed (${both.data.count})`);
+  for (const s of both.data.sessions) {
+    assert.ok(s.target === null || (typeof s.target === "object" && Number.isInteger(s.target.pid)), "targets are app identity or null, never task text");
+    assert.ok(typeof s.ageSec === "number" && typeof s.inputHeld === "boolean" && typeof s.action !== "undefined");
+  }
+  const forged = await appRequest({ tool: "list_sessions", sessionId: "ls-a", leaseToken: "forged" });
+  assert.equal(forged.ok, false);
+  assert.equal(forged.error.code, "session_owner_required", "the registry needs the live owner lease, not a session id alone");
+  assert.equal((await appSessionRequest({ tool: "close_session", sessionId: "ls-b" })).ok, true);
+  const one = await a.remote({ tool: "list_sessions" });
+  assert.equal(one.data.count, both.data.count - 1, "a closed session leaves the registry");
+});
+
 test("disconnect cancels the child process and a queued request never posts input", async () => {
   const active = new AbortController();
   const queued = new AbortController();

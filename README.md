@@ -330,8 +330,11 @@ control from shared-desktop control. It is a view of the app, not a sandbox.
 
 Only when the user asks to watch, enable `preview` with `enabled: true` to show a small, nonactivating window
 containing the controlled app and a cyan cursor labeled Codewhale. The preview
-updates after agent actions, and its cursor is separate from the hardware
-pointer. Close the panel or use `enabled: false` to hide it.
+refreshes on a timer while a session is bound (`CODEWHALE_CU_PREVIEW_REFRESH_MS`,
+default 1000; 0 disables), so it behaves like a live view of the app instead of
+a frozen still; its cursor is separate from the hardware pointer. Close the
+panel or use `enabled: false` to hide it — and the session that showed the
+panel hides it when it closes, so no panel outlives its session.
 
 This is background control of a local app, not an isolated desktop. Some apps,
 system dialogs, and workflows may still require foreground interaction. The
@@ -366,7 +369,8 @@ with an upgrade error instead of sharing another client's input state.
 ## Frontier ability set
 
 The advertised surface is merged for context economy — `click`, `pointer`,
-`clipboard`, `recording`, `computer`, with `key {duration}` covering holds.
+`clipboard`, `recording`, `computer`, with `key {duration}` covering holds;
+`list_sessions` and `kill_app` ride alongside as themselves.
 The per-action wire names (`left_click`, `read_clipboard`, `recording_start`,
 `computer_list`, `hold_key`, …) remain callable as aliases, so pinned hosts and
 receipts keep working; `tools/list` advertises the merged set only.

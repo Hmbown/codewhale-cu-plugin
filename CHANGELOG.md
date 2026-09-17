@@ -1,5 +1,48 @@
 # Release notes
 
+## 0.7.1 — live preview, session visibility, kill_app; dogfood fixes
+
+Straight out of the 2026-09-17 live dogfooding of 0.7.0 on a real Mac (a
+scripted 9-check sweep with raw JSON-RPC receipts, run while another model
+drove the same daemon):
+
+- **The preview panel is live while a session is bound.** After the first
+  successful capture a timer keeps refreshing it (default 1s;
+  `CODEWHALE_CU_PREVIEW_REFRESH_MS=0` disables), so the person watches the app
+  instead of a frozen still. A hide now quiesces an in-flight capture (its late
+  notify could re-show a just-dismissed panel), and the session that showed
+  the panel hides it on close — a dead session no longer leaves an orphaned
+  panel with no owner to refresh or hide it.
+- **`list_sessions`.** Multi-agent coexistence made visible: live sessions as
+  content-free summaries (bound target, delivery mode, current action, idle
+  age, whether any session holds a pointer) plus the user's control mode.
+  Lease-gated; available even while the user has paused or stopped another
+  session, because seeing who is driving is how a model explains machine
+  state. In direct mode it reports the one in-process session.
+- **`kill_app`.** Quit or force-quit by exact name, bundle id or pid. Refuses
+  an ambiguous name match (`ambiguous_application` — pass pid), never
+  terminates the Computer Use helper or its host (`protected_application`),
+  and reports verified termination in the receipt.
+- **`open_application` now returns `app_not_found`** for names and bundle ids
+  that resolve nowhere and for dead pids. The dogfood sweep showed all three
+  answering with a generic `tool_error` (`open failed: Unable to find
+  application named ...`), so agents could not branch on a documented code.
+
+Advertised surface: 33 tools (31 + the two above). Docs reconciled: the quick
+reference and refusal codes (including the real `window_ambiguous` trigger —
+duplicate window frames for the resolved window, not merely "several
+windows"), and the README preview paragraph.
+
+Verification: `npm test` 307 tests — 292 pass / 0 fail / 15 platform-skipped
+(6 new: live-preview lifecycle, `app_not_found` codes, direct-mode
+`list_sessions`, `kill_app` pass-through, daemon session registry). Live smoke
+on this machine (0.7.1 installed, receipts in /tmp/cu-smoke-071): 33 tools
+advertised; two live MCP clients visible in `list_sessions`; Calculator
+launched in the background and killed with `kill_app` (the protected guard
+refuses the helper itself); the preview file advanced 2.2s of mtime over a
+2.6s window, froze on mute, resumed on re-enable, and stopped on session
+disconnect — 17/17.
+
 ## 0.7.0 — merged advertised surface; wire names stay aliases
 
 `tools/list` advertises **31 tools instead of 45**. Every session pays for the

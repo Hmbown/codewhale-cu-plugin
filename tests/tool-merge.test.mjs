@@ -63,9 +63,10 @@ test("key with duration routes to hold semantics; conflicts are bad_args", () =>
 test("the advertised list is the merged surface; aliases are not listed", () => {
   const advertised = TOOLS.filter((t) => t.hidden !== true).map((t) => t.name);
   const hidden = TOOLS.filter((t) => t.hidden === true).map((t) => t.name);
-  assert.equal(advertised.length, 31, `advertised surface is ${advertised.length}`);
+  assert.equal(advertised.length, 33, `advertised surface is ${advertised.length}`);
   assert.equal(hidden.length, 19, `hidden aliases are ${hidden.length}`);
   for (const merged of ["click", "pointer", "clipboard", "recording", "computer"]) assert.ok(advertised.includes(merged), merged);
+  for (const straight of ["list_sessions", "kill_app"]) assert.ok(advertised.includes(straight), straight);
   for (const gone of ["left_click", "double_click", "triple_click", "right_click", "middle_click", "mouse_move",
     "left_mouse_down", "left_mouse_up", "read_clipboard", "write_clipboard",
     "recording_start", "recording_stop", "recording_status", "recording_list",
@@ -121,8 +122,9 @@ after(() => { try { server.stdin.end(); } catch {} server?.kill("SIGTERM"); });
 test("tools/list serves exactly the advertised union, validated shapes included", async () => {
   const res = await rpc("tools/list", {});
   const names = res.result.tools.map((t) => t.name);
-  assert.equal(names.length, 31);
+  assert.equal(names.length, 33);
   assert.ok(names.includes("click") && names.includes("pointer") && names.includes("clipboard") && names.includes("recording") && names.includes("computer"));
+  assert.ok(names.includes("list_sessions") && names.includes("kill_app"));
   assert.ok(!names.includes("left_click") && !names.includes("hold_key") && !names.includes("read_clipboard"));
 });
 
