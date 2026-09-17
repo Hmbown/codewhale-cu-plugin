@@ -324,6 +324,7 @@ test('macOS open_application reports launched only when it actually launched the
   t.after(()=>{ if(old===undefined) delete process.env.CODEWHALE_CU_APP_BUNDLE; else process.env.CODEWHALE_CU_APP_BUNDLE=old; fs.rmSync(bundle,{recursive:true,force:true}); });
   fs.mkdirSync(path.join(bundle,'Contents','MacOS'),{recursive:true});
   fs.writeFileSync(path.join(bundle,'Contents','MacOS','accessibility'),'');
+  process.env.CODEWHALE_CU_APP_BUNDLE=bundle;
   let running=true;
   const opens=[];
   const backend=create({exec:{run:async(cmd,args)=>{
