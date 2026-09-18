@@ -40,7 +40,12 @@ Never retry a refusal unchanged — re-observe, re-target, or change route.
 | `replay_too_large` | the trajectory exceeds the 200-turn replay cap | split it, or replay a pruned copy |
 | `app_upgrade_required` | the helper predates the feature or is not running | restart/update the Codewhale Computer Use app |
 | `unsupported_on_backend` | tool not implemented on that platform backend | check the platform note in the main skill |
-| `unsupported_on_transport` | `app_script` sent to an ssh/hdc computer — scripting is local-only so a remote channel never becomes a shell | run it on `local`, or use the host's own remote access |
+| `unsupported_on_transport` | `app_script` sent to an ssh/docker/hdc computer — scripting is local-only so a remote channel never becomes a shell | run it on `local`, or use the host's own remote access |
+| `docker_unavailable` | `computer spawn` found no reachable docker daemon | start Docker (or Colima); spawn needs the daemon, not just the CLI |
+| `spawn_image_missing` | the requested spawn image is not present locally | build/pull it, or omit `image` to use the plugin's own Linux desktop image (auto-built on first spawn) |
+| `spawn_failed` | provisioning failed or the desktop did not become ready | read the message; the failed container is removed automatically — fix the cause and spawn again |
+| `invalid_container` | a docker registry entry lacks a valid container name | register it through `computer spawn`, never by hand |
+| `cleanup_failed` | `docker rm` failed while tearing down a spawned computer | the registry entry is still removed; check `docker ps` for the labeled container and remove it manually |
 | `script_error` | osascript exited non-zero; stderr is in the message | read the error, check the app's scripting dictionary (`sdef`), fix the script |
 | `script_timeout` | the script — or a consent dialog — was still open at the deadline | narrow the script; a consent prompt is the person's choice, report it |
 | `script_cancelled` | the script's own dialog was cancelled (-128) | the user declined in-app; stop or ask |

@@ -1,5 +1,43 @@
 # Release notes
 
+## 0.10.0 — spawned computers: the agent gets its own desktop
+
+The missing primitive behind "don't take over my computer": a computer is
+an execution environment, not necessarily the user's desktop. This release
+adds the disposable kind.
+
+- **`computer {action:"spawn", id, transport:"docker"}`** — provisions a
+  task-owned Linux desktop container (the plugin's `docker/Dockerfile`
+  image: Xvfb, openbox, AT-SPI, Chromium, the bundled agent), registers it
+  `owned:true`, and makes it active. Every existing tool works on it
+  unchanged — screenshots, the accessibility tree, `open_application`,
+  clicks, `browser` — through the same allow-listed agent protocol as
+  ssh: the channel is `docker exec` into `agent.mjs`, never a shell.
+- **Transactional lifecycle.** Spawn auto-builds the image on first use,
+  waits for a live window manager before reporting ready, and removes the
+  container on any failure. `computer remove` destroys the container;
+  MCP session end (stdin close, SIGTERM/SIGINT/SIGHUP) reaps every
+  container this session spawned — labelled
+  `codewhale.cu.spawned/session/computer` so teardown is auditable and
+  never touches another session's or user's containers.
+- **`local` becomes the exceptional route** — for tasks that need the
+  user's own session, not the default. The skill now names the two
+  computer kinds (spawned = ours, registered = someone's) and prefers a
+  spawned desktop for general work.
+- **Failures are typed**: `docker_unavailable`, `spawn_image_missing`,
+  `spawn_failed`, `invalid_container`, `cleanup_failed`.
+- **Scope honesty**: spawned desktops are Linux/X11 only. macOS and
+  Windows still have no isolated in-session desktop (one WindowServer /
+  one interactive session per login) — the architecture leaves room for
+  a VM transport next.
+
+Verification: `npm test` (new `tests/spawn.test.mjs` — real-container
+integration gated on a live docker daemon, unit tests otherwise);
+live on docker 28.4 / Colima: spawn in ~1s → `open_application`
+chromium → `list_windows` shows the window, AT-SPI `get_app_state`
+returns real elements, `type` lands, `computer remove` destroys the
+container, server exit reaps session-owned containers.
+
 ## 0.9.0 — use the whole computer: `app_script` and interface choice
 
 Clicking was the plugin's only way into an app. This release adds the

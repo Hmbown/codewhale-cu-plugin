@@ -45,12 +45,12 @@ export const TOOLS = [
   { name: "preview", description: "macOS: show or hide the nonactivating app preview with the drawn agent cursor. On by default while an app is bound — each action updates the captured window and cursor without moving the real pointer. Set enabled:false to mute it for the session.", inputSchema: { type: "object", properties: { enabled: { type: "boolean" }, computer: computerParam }, additionalProperties: false } },
   // ---- computers (switching is a default) ----
   {
-    name: "computer", description: "The computer registry. action list | switch | register | remove. switch/register/remove take `id`; register also takes transport (local|ssh|hdc) plus host/port/user/target/installAgent. Every other tool also accepts `computer` to switch stickily on use.",
-    inputSchema: { type: "object", required: ["action"], properties: { action: { enum: ["list", "switch", "register", "remove"] }, id: { type: "string", description: "Short id for the registered computer (letters, digits, dot, dash)" }, transport: { enum: ["local", "ssh", "hdc"] }, label: { type: "string" }, host: { type: "string", description: "ssh: hostname" }, port: { type: "integer", description: "ssh: port (default 22)" }, user: { type: "string", description: "ssh: user" }, target: { type: "string", description: "hdc: target key (omit for the only connected device)" }, installAgent: { type: "boolean", description: "ssh: push the remote agent before first use (default true)" } }, additionalProperties: false },
+    name: "computer", description: "The computer registry. action list | switch | register | spawn | remove. switch/register/spawn/remove take `id`; register also takes transport (local|ssh|hdc) plus host/port/user/target/installAgent; spawn takes transport (docker) plus optional image/label and creates a task-owned disposable desktop that remove or session end destroys. Prefer a spawned computer for work that does not need the user's own session. Every other tool also accepts `computer` to switch stickily on use.",
+    inputSchema: { type: "object", required: ["action"], properties: { action: { enum: ["list", "switch", "register", "spawn", "remove"] }, id: { type: "string", description: "Short id for the registered computer (letters, digits, dot, dash)" }, transport: { enum: ["local", "ssh", "hdc", "docker"] }, label: { type: "string" }, image: { type: "string", description: "spawn/docker: image to run (default the plugin's Linux desktop image)" }, host: { type: "string", description: "ssh: hostname" }, port: { type: "integer", description: "ssh: port (default 22)" }, user: { type: "string", description: "ssh: user" }, target: { type: "string", description: "hdc: target key (omit for the only connected device)" }, installAgent: { type: "boolean", description: "ssh: push the remote agent before first use (default true)" } }, additionalProperties: false },
   },
   {
     name: "computer_list",
-    description: "List registered computers (local, ssh, harmony/hdc) and which one is active. Every other tool acts on the active computer unless given `computer`.",
+    description: "List registered computers (local, ssh, docker, harmony/hdc) and which one is active. Every other tool acts on the active computer unless given `computer`.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
   },
   {
@@ -73,6 +73,21 @@ export const TOOLS = [
         user: { type: "string", description: "ssh: user" },
         target: { type: "string", description: "hdc: target key (omit for the only connected device)" },
         installAgent: { type: "boolean", description: "ssh: push the remote agent before first use (default true)" },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "computer_spawn",
+    description: "Spawn a task-owned disposable computer. transport=docker provisions an isolated Linux desktop container registered under `computer`; every other tool works on it unchanged. The spawned computer is destroyed by computer_remove or when the session ends. Prefer it over local when the task does not need the user's own session.",
+    inputSchema: {
+      type: "object",
+      required: ["computer", "transport"],
+      properties: {
+        computer: { type: "string", description: "Short id for the spawned computer (letters, digits, dot, dash)" },
+        transport: { enum: ["docker"] },
+        image: { type: "string", description: "docker image (default the plugin's Linux desktop image)" },
+        label: { type: "string" },
       },
       additionalProperties: false,
     },
@@ -543,7 +558,7 @@ export const REMOTE_TOOLS = new Set([
 
 /** Map public tool name -> backend method name. */
 export const BACKEND_METHOD = Object.fromEntries(
-  TOOLS.filter((t) => !["computer_list", "computer_switch", "computer_register", "computer_remove", "stop_computer_control", "wait", "wait_for", "find_elements", "run_actions", "trajectory_start", "trajectory_stop", "trajectory_status", "trajectory_replay"].includes(t.name))
+  TOOLS.filter((t) => !["computer_list", "computer_switch", "computer_register", "computer_spawn", "computer_remove", "stop_computer_control", "wait", "wait_for", "find_elements", "run_actions", "trajectory_start", "trajectory_stop", "trajectory_status", "trajectory_replay"].includes(t.name))
     .map((t) => [t.name, {
       request_access: "probe",
       recording_start: "recordingStart",
@@ -562,7 +577,7 @@ export const MERGED_EXPANSION = {
   pointer: ["mouse_move", "left_mouse_down", "left_mouse_up"],
   clipboard: ["read_clipboard", "write_clipboard"],
   recording: ["recording_start", "recording_stop", "recording_status", "recording_list"],
-  computer: ["computer_list", "computer_switch", "computer_register", "computer_remove"],
+  computer: ["computer_list", "computer_switch", "computer_register", "computer_spawn", "computer_remove"],
   key: ["key", "hold_key"],
   browser: ["browser_start", "browser_status", "browser_navigate", "browser_click", "browser_type", "browser_screenshot", "browser_stop"],
   trajectory: ["trajectory_start", "trajectory_stop", "trajectory_status", "trajectory_replay"],
@@ -616,6 +631,7 @@ const TOOL_ANNOTATIONS = {
   // Computer registry — touches other machines.
   computer_switch: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   computer_register: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  computer_spawn: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   computer_remove: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
   open_application: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   // Input — changes what the user sees.
@@ -673,7 +689,7 @@ const HIDDEN_FROM_LIST = new Set([
   "mouse_move", "left_mouse_down", "left_mouse_up",
   "read_clipboard", "write_clipboard",
   "recording_start", "recording_stop", "recording_status", "recording_list",
-  "computer_list", "computer_switch", "computer_register", "computer_remove",
+  "computer_list", "computer_switch", "computer_register", "computer_spawn", "computer_remove",
   "hold_key",
   "browser_start", "browser_status", "browser_navigate", "browser_click", "browser_type", "browser_screenshot", "browser_stop",
   "trajectory_start", "trajectory_stop", "trajectory_status", "trajectory_replay",
@@ -737,8 +753,8 @@ export function resolveTool(name, args = {}) {
     case "computer": {
       const rest = { ...args };
       delete rest.action;
-      const wire = { list: "computer_list", switch: "computer_switch", register: "computer_register", remove: "computer_remove" }[args.action];
-      if (!wire) throw bad(`computer action must be list, switch, register or remove (got ${JSON.stringify(args.action)})`);
+      const wire = { list: "computer_list", switch: "computer_switch", register: "computer_register", spawn: "computer_spawn", remove: "computer_remove" }[args.action];
+      if (!wire) throw bad(`computer action must be list, switch, register, spawn or remove (got ${JSON.stringify(args.action)})`);
       if (args.action === "list") return { name: wire, args: {} };
       if (rest.id == null) throw bad(`computer action "${args.action}" requires id`);
       const id = rest.id;

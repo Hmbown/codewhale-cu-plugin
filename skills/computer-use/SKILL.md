@@ -11,13 +11,33 @@ The plugin controls **computers**, not "the screen". `computer {action:"list"}` 
 registry; one computer is always **active**, and every tool acts on the active
 computer unless given `computer`.
 
+A computer is an execution environment, not necessarily the user's desktop.
+The registry holds two kinds:
+
+- **Spawned computers are ours.** `computer {action:"spawn", id:"<id>",
+  transport:"docker"}` provisions a disposable Linux desktop container,
+  registers it, and makes it active. Every tool works on it unchanged; the
+  user's own machine is never touched. It is destroyed by `computer
+  {action:"remove"}` or when the session ends. **Prefer a spawned computer
+  for any work that does not need the user's own session** — it is the
+  isolated workspace, not a workaround for sharing theirs politely.
+- **Registered computers are someone's.** `local` is the machine the plugin
+  runs on — the user's desktop, with their logged-in apps and their pointer.
+  `ssh` computers run the bundled remote agent (pushed automatically at
+  registration). `hdc` computers are HarmonyOS devices driven over hdc.
+  Reach for `local` only when the task genuinely needs that session — their
+  Mail, their signed-in browser, their files on screen. A spawned desktop
+  cannot replace that, and pretending otherwise is the failure mode this
+  distinction exists to prevent.
+
+Other rules:
+
 - Pass `computer: "<id>"` on any tool to act on (and stickily switch to) that
   computer. `computer_switch` changes the active computer without acting.
-- `local` is the machine the plugin runs on. `ssh` computers run the bundled
-  remote agent (pushed automatically at registration). `hdc` computers are
-  HarmonyOS devices driven over hdc.
 - Every receipt names the computer it happened on. Read it before continuing —
   never assume the action landed on the machine you meant.
+- Spawned containers are task-owned: never register one as a normal computer,
+  and never treat its filesystem or state as durable — it dies with the task.
 
 ## Human controls
 
@@ -271,9 +291,10 @@ with stderr, and `script_timeout` means the script — or a consent dialog
 - `do shell script "…"` inside a script works, but prefer the host's own
   shell for shell work — keep `app_script` for app control and the parts
   only a dictionary exposes.
-- ssh and hdc computers refuse it (`unsupported_on_transport`): remote
-  channels stay computer-use only, never a shell. Windows and Linux
-  backends fail `unsupported_on_backend` for now.
+- ssh, docker and hdc computers refuse it (`unsupported_on_transport`):
+  remote channels stay computer-use only, never a shell — a spawned
+  desktop is no exception. Windows and Linux backends fail
+  `unsupported_on_backend` for now.
 
 ## Browser (CDP)
 

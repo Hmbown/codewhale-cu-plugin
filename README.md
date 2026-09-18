@@ -379,7 +379,7 @@ receipts keep working; `tools/list` advertises the merged set only.
   programmatic interface to prefer over clicking wherever one exists.
   Returns stdout as `result`; refusals are typed (`script_error`,
   `script_timeout`, `automation_denied` for a declined/missing Automation
-  consent). Refused on ssh/hdc computers: a remote channel stays
+  consent). Refused on ssh/docker/hdc computers: a remote channel stays
   computer-use only, never a shell.
 - **Guidance & policy** — the operating skill ships as MCP resources
   (`skills/list`, `skills/get`, `resources/read` of `skill://codewhale-cu/…`,
@@ -388,7 +388,13 @@ receipts keep working; `tools/list` advertises the merged set only.
   openWorld) for host approval and sandbox policy.
 - **Recording** — `recording` (start/stop/status/list; see below).
 - **Computers** — `computer` (list/switch/register with ssh agent
-  auto-push/remove).
+  auto-push/spawn/remove). `spawn {id, transport:"docker"}` provisions a
+  task-owned disposable Linux desktop container: it is registered
+  `owned:true`, becomes active, takes every tool unchanged through the
+  same agent protocol as ssh, and is destroyed by `remove` or when the
+  MCP session ends. A computer is an execution environment — prefer a
+  spawned desktop for work that does not need the user's own session,
+  and keep `local` for the tasks that do.
 - **Safety** — `stop_computer_control` kill switch; permission probes that
   name the missing grant; receipts on every call naming the computer it
   happened on.
@@ -410,6 +416,11 @@ permission** — it never guesses and never half-acts.
   recorder cleanup.
 - **HarmonyOS** — `hdc` on PATH with the device connected
   (`hdc list targets`); ffmpeg on the host for snapshot-series recordings.
+- **Spawned computers** — a reachable docker daemon (`docker version`).
+  `computer spawn` builds the plugin's Linux desktop image from
+  `docker/Dockerfile` on first use; no sshd, keys or host mounts are
+  involved — the agent rides `docker exec` and the container boundary is
+  the isolation.
 
 ## How the four platforms map
 

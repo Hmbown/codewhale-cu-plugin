@@ -7,7 +7,8 @@ import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
 import * as registry from "../src/registry.mjs";
-import { backendFor, installRemoteAgent, executorFor, closeAppSession, routeFingerprint, closeSshChannel } from "../src/transport.mjs";
+import { backendFor, installRemoteAgent, executorFor, closeAppSession, routeFingerprint, closeSshChannel, SESSION_ID } from "../src/transport.mjs";
+import { spawnDockerComputer, destroyDockerComputer, destroySessionSpawns } from "../src/spawn.mjs";
 import { TOOLS, TOOL_NAMES, REQUIRED_ARGS, ELEMENT_ONLY_TARGET, READ_ONLY_TOOLS, REMOTE_TOOLS, BACKEND_METHOD, resolveTool, parseGrant, MERGED_EXPANSION } from "../src/tools.mjs";
 import { tryJson, withSignal, throwIfAborted, wait } from "../src/exec.mjs";
 import { APP_VERSION } from "../src/app-socket.mjs";
@@ -553,7 +554,7 @@ async function callTool(params) {
     return { content: [{ type: "text", text: JSON.stringify(receipt(null, {
       ok: true,
       active: activeComputerId,
-      computers: Object.values(reg.computers).map((c) => ({ id: c.id, transport: c.transport, platform: c.platform ?? c.platformHint ?? null, label: c.label ?? null, host: c.host ?? null })),
+      computers: Object.values(reg.computers).map((c) => ({ id: c.id, transport: c.transport, platform: c.platform ?? c.platformHint ?? null, label: c.label ?? null, host: c.host ?? null, owned: c.owned === true || undefined, container: c.container ?? undefined })),
       note: "Pass `computer` on any tool to switch (sticky), or computer_switch to switch explicitly.",
     })) }] };
   }
@@ -585,12 +586,42 @@ async function callTool(params) {
     }
   }
 
+  if (name === "computer_spawn") {
+    try {
+      if (args.transport !== "docker") throw new ServerError("bad_args", `spawn transport must be "docker" (got ${JSON.stringify(args.transport)})`);
+      const spawned = await spawnDockerComputer({ id: args.computer, image: args.image });
+      let entry;
+      try {
+        entry = registry.register({ id: args.computer, transport: "docker", label: args.label, container: spawned.container, image: spawned.image, platform: "linux", owned: true, spawnedBy: SESSION_ID });
+      } catch (err) {
+        // The container exists but could not be registered — spawn is
+        // transactional, so take the container down with it.
+        await destroyDockerComputer({ container: spawned.container }).catch(() => {});
+        throw err;
+      }
+      await bindComputer(entry);
+      // A spawned computer is the point of the call — it becomes active so
+      // subsequent tools act on the disposable desktop without a switch.
+      activeComputerId = entry.id;
+      return { content: [{ type: "text", text: JSON.stringify(receipt(entry, { ok: true, active: activeComputerId, spawned: { id: entry.id, transport: entry.transport, platform: entry.platform, container: entry.container, image: entry.image, owned: true, built: spawned.built }, note: "This is a disposable, task-owned desktop — it is destroyed by computer remove or when this session ends. The user's own machine is untouched." })) }] };
+    } catch (err) {
+      return { content: [{ type: "text", text: JSON.stringify(fail(null, err.code ?? "spawn_failed", err.message ?? String(err))) }], isError: true };
+    }
+  }
+
   if (name === "computer_remove") {
+    let entry = null;
+    try { entry = registry.get(args.computer); } catch {}
+    let teardown = null;
+    if (entry?.transport === "docker") {
+      try { teardown = await destroyDockerComputer(entry); }
+      catch (err) { teardown = { destroyed: false, cleanup_error: err.message ?? String(err) }; }
+    }
     const res = registry.remove(args.computer);
     if (activeComputerId === args.computer) activeComputerId = "local";
     res.active = activeComputerId;
     await retireBinding(args.computer);
-    return { content: [{ type: "text", text: JSON.stringify(receipt(null, { ok: true, ...res })) }] };
+    return { content: [{ type: "text", text: JSON.stringify(receipt(null, { ok: true, ...res, ...(teardown ?? {}) })) }] };
   }
 
   if (name === "computer_switch") {
@@ -682,7 +713,7 @@ async function callTool(params) {
       throw new ServerError("unsupported_on_transport", `app_script runs on the local computer only — the ${computer.transport} transport stays a computer-use channel, never a shell`);
     }
     let data;
-    const ex = computer.transport === "local" || computer.transport === "ssh" ? await executorFor(computer, binding) : null;
+    const ex = computer.transport === "local" || computer.transport === "ssh" || computer.transport === "docker" ? await executorFor(computer, binding) : null;
     if (ex?.kind === "app") binding.usedApp = true;
     // Zoom needs the bound parent raster up front (server-side check too, not
     // only the backend) so it can bind the child raster after success.
@@ -1110,6 +1141,22 @@ async function shutdown() {
   for (const request of requests.values()) request.controller.abort();
   try { await releaseControl(); }
   catch (err) { process.stderr.write(`Computer input cleanup failed: ${err?.message ?? err}\n`); }
+  // Destroy the disposable computers this session spawned. Entries belonging
+  // to other (possibly still-running) sessions are left alone — a container
+  // belongs to the process that created it.
+  try {
+    await withSignal(null, async () => {
+      await destroySessionSpawns();
+      const reg = registry.list();
+      for (const c of Object.values(reg.computers)) {
+        if (c.transport === "docker" && c.owned === true && c.spawnedBy === SESSION_ID) {
+          await destroyDockerComputer(c).catch(() => {});
+          try { registry.remove(c.id); } catch {}
+          await retireBinding(c.id).catch(() => {});
+        }
+      }
+    });
+  } catch (err) { process.stderr.write(`Spawned computer cleanup failed: ${err?.message ?? err}\n`); }
   process.exit(0);
 }
 process.stdin.on("end", shutdown);

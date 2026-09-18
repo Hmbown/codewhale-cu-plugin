@@ -34,7 +34,7 @@ no better interface.
 - `app_script {script, language?, timeout?}` — macOS local only: AppleScript
   (default) or JXA through osascript. `result` is stdout; refusals are
   `script_error`, `script_timeout`, `automation_denied` (-1743 consent) and
-  `unsupported_on_transport` on ssh/hdc.
+  `unsupported_on_transport` on ssh/docker/hdc.
 
 ## Apps & computers
 - `open_application {name|bundle_id|pid, activate?}` — bind the input target; `app_not_found` when the selector resolves nowhere.
@@ -42,7 +42,11 @@ no better interface.
 - `kill_app {name|bundle_id|pid, force?}` — quit an app; refuses an ambiguous name match (pass pid); never the helper itself.
 - `set_window_frame {app_ref?, window_id, frame:{x,y,w,h}}` — move/resize one window; readbacks report what the app actually did (`verified`, `ax_errors`).
 - `preview {enabled}` — floating panel: captured window + agent/user cursors; live while bound.
-- `computer {action, id?}` — list / switch / register / remove.
+- `computer {action, id?}` — list / switch / register / **spawn** / remove.
+  `spawn {id, transport:"docker", image?}` provisions a task-owned disposable
+  Linux desktop (registered `owned:true`, becomes active) — the default
+  workspace for anything that does not need the user's own session. `remove`
+  or session end destroys it. `local` stays for work in the user's session.
 - `recording {action, …}` — start / stop / status / list (opt-in screen recordings).
 
 ## Browser (CDP)

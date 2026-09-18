@@ -49,8 +49,9 @@ test("pointer, clipboard, recording and computer expand with their requirements 
   assert.deepEqual(resolveTool("computer", { action: "list" }), { name: "computer_list", args: {} });
   assert.deepEqual(resolveTool("computer", { action: "switch", id: "mac2" }), { name: "computer_switch", args: { computer: "mac2" } });
   assert.deepEqual(resolveTool("computer", { action: "register", id: "box", transport: "ssh", host: "h" }), { name: "computer_register", args: { transport: "ssh", host: "h", computer: "box" } });
+  assert.deepEqual(resolveTool("computer", { action: "spawn", id: "task-x", transport: "docker" }), { name: "computer_spawn", args: { transport: "docker", computer: "task-x" } });
   assert.throws(() => resolveTool("computer", { action: "switch" }), /requires id/);
-  assert.throws(() => resolveTool("computer", { action: "reset" }), /list, switch, register or remove/);
+  assert.throws(() => resolveTool("computer", { action: "reset" }), /list, switch, register, spawn or remove/);
 });
 
 test("key with duration routes to hold semantics; conflicts are bad_args", () => {
@@ -93,13 +94,13 @@ test("the advertised list is the merged surface; aliases are not listed", () => 
   const advertised = TOOLS.filter((t) => t.hidden !== true).map((t) => t.name);
   const hidden = TOOLS.filter((t) => t.hidden === true).map((t) => t.name);
   assert.equal(advertised.length, 37, `advertised surface is ${advertised.length}`);
-  assert.equal(hidden.length, 30, `hidden aliases are ${hidden.length}`);
+  assert.equal(hidden.length, 31, `hidden aliases are ${hidden.length}`);
   for (const merged of ["click", "pointer", "clipboard", "recording", "computer", "browser", "trajectory"]) assert.ok(advertised.includes(merged), merged);
   for (const straight of ["list_sessions", "kill_app", "set_window_frame"]) assert.ok(advertised.includes(straight), straight);
   for (const gone of ["left_click", "double_click", "triple_click", "right_click", "middle_click", "mouse_move",
     "left_mouse_down", "left_mouse_up", "read_clipboard", "write_clipboard",
     "recording_start", "recording_stop", "recording_status", "recording_list",
-    "computer_list", "computer_switch", "computer_register", "computer_remove", "hold_key",
+    "computer_list", "computer_switch", "computer_register", "computer_spawn", "computer_remove", "hold_key",
     "browser_start", "browser_status", "browser_navigate", "browser_click", "browser_type", "browser_screenshot", "browser_stop",
     "trajectory_start", "trajectory_stop", "trajectory_status", "trajectory_replay"]) {
     assert.ok(!advertised.includes(gone), `${gone} must not be advertised`);
