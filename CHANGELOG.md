@@ -1,5 +1,46 @@
 # Release notes
 
+## 0.9.0 — use the whole computer: `app_script` and interface choice
+
+Clicking was the plugin's only way into an app. This release adds the
+programmatic one and teaches the skill to choose between them — computer
+use means using the whole computer, not only its screen.
+
+- **`app_script` (advertised 37)** — AppleScript or JXA through osascript
+  into apps that ship a scripting dictionary (Finder, Mail, Safari,
+  Calendar, Notes, Reminders, System Events…). Deterministic, returns
+  stdout as `result`, needs no Accessibility grant and never touches the
+  pointer; `language:"javascript"` selects JXA, `timeout` caps at 120s.
+  Refusals are typed: `script_error` (stderr in the message),
+  `script_timeout`, `script_cancelled` (-128), and `automation_denied`
+  (-1743 — the fix is Automation consent in Settings, not a retry).
+  macOS only; other backends fail `unsupported_on_backend`.
+- **Local computer only, by construction.** `app_script` is refused for
+  ssh/hdc computers twice — the server fails `unsupported_on_transport`
+  before dispatch, and the remote handler refuses it for any computerId
+  that is not `local` — so a remote channel stays a computer-use
+  surface and can never be steered into a shell. Routed through the
+  helper when the app owns the session, so the action appears in
+  `list_sessions`, honors Pause/Stop, and Automation consent lands on the
+  bundle the user already manages.
+- **The skill now leads with interface choice.** Per step: the host's own
+  tools → `app_script` → `browser` (CDP) → accessibility actions →
+  pixels. The observe–act–verify loop stays, reframed as the GUI loop —
+  the route for apps with no better interface, not the whole product.
+  A step that can be clicked still costs more than the same step
+  scripted, and `action_sent` proves less than a returned value.
+
+Verification: `npm test` 345 tests — 330 pass / 0 fail / 15
+platform-skipped; `node scripts/check-receipts.mjs docs parity/results`
+clean; `npm run smoke` 23/23 on macOS arm64 (the script's tools/list
+checks were stale since the 0.7.0 merge — fixed to the advertised
+surface in this release).
+Live smoke in direct mode (`CODEWHALE_CU_APP=off`, macOS arm64):
+AppleScript `return "whole computer"` → `result`, JXA
+`"ok".toUpperCase()` → `OK`, syntax error → `script_error` with stderr,
+`tell application "Finder" to count windows` → `0` with no consent
+dialog where Automation was already granted.
+
 ## 0.8.0 — window frames, installed apps, trajectories, capability grants
 
 The last four from the dogfood gap list, in one batch (no per-feature version

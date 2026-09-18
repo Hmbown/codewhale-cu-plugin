@@ -3,6 +3,10 @@
 Every tool takes an optional `computer` id (sticky switch). Every action
 receipt is JSON: `ok`, plus what was sent. Verify effects by observing.
 
+Interface order per step: the host's own shell/files/APIs → `app_script`
+→ `browser` (CDP) → accessibility elements → pixels. Click only what has
+no better interface.
+
 ## Observe
 - `request_access` — permissions + capabilities; call once per session.
 - `list_apps {all?}` — running apps (names, pids). Default: user-facing apps.
@@ -27,6 +31,10 @@ receipt is JSON: `ok`, plus what was sent. Verify effects by observing.
 - `scroll {target, direction, amount?}` · `left_click_drag {from_target, to}`
 - `invoke_menu {path}` — app menu items through accessibility (exact for app-level commands like New/Save/Quit; see the close recipe for windows).
 - `pointer {action, target?}` — move/down/up primitives (foreground/shared only).
+- `app_script {script, language?, timeout?}` — macOS local only: AppleScript
+  (default) or JXA through osascript. `result` is stdout; refusals are
+  `script_error`, `script_timeout`, `automation_denied` (-1743 consent) and
+  `unsupported_on_transport` on ssh/hdc.
 
 ## Apps & computers
 - `open_application {name|bundle_id|pid, activate?}` — bind the input target; `app_not_found` when the selector resolves nowhere.

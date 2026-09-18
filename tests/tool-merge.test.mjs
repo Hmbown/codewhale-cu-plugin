@@ -92,7 +92,7 @@ test("browser actions expand to their wire tools; misuse fails as bad_args namin
 test("the advertised list is the merged surface; aliases are not listed", () => {
   const advertised = TOOLS.filter((t) => t.hidden !== true).map((t) => t.name);
   const hidden = TOOLS.filter((t) => t.hidden === true).map((t) => t.name);
-  assert.equal(advertised.length, 36, `advertised surface is ${advertised.length}`);
+  assert.equal(advertised.length, 37, `advertised surface is ${advertised.length}`);
   assert.equal(hidden.length, 30, `hidden aliases are ${hidden.length}`);
   for (const merged of ["click", "pointer", "clipboard", "recording", "computer", "browser", "trajectory"]) assert.ok(advertised.includes(merged), merged);
   for (const straight of ["list_sessions", "kill_app", "set_window_frame"]) assert.ok(advertised.includes(straight), straight);
@@ -153,7 +153,7 @@ after(() => { try { server.stdin.end(); } catch {} server?.kill("SIGTERM"); });
 test("tools/list serves exactly the advertised union, validated shapes included", async () => {
   const res = await rpc("tools/list", {});
   const names = res.result.tools.map((t) => t.name);
-  assert.equal(names.length, 36);
+  assert.equal(names.length, 37);
   assert.ok(names.includes("click") && names.includes("pointer") && names.includes("clipboard") && names.includes("recording") && names.includes("computer"));
   assert.ok(names.includes("list_sessions") && names.includes("kill_app") && names.includes("browser") && names.includes("set_window_frame") && names.includes("trajectory"));
   assert.ok(!names.includes("left_click") && !names.includes("hold_key") && !names.includes("read_clipboard"));

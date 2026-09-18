@@ -69,9 +69,11 @@ try {
   await rpc("notifications/initialized", undefined, 5_000).catch(() => {});
   const tl = await rpc("tools/list", {});
   const tools = tl.result?.tools ?? [];
-  log("tools/list", tools.length >= 38, `${tools.length} tools`);
+  log("tools/list", tools.length >= 37, `${tools.length} tools`);
   const names = new Set(tools.map((t) => t.name));
-  for (const required of ["screenshot", "recording_start", "recording_stop", "computer_switch", "computer_list", "get_app_state", "left_click", "type", "key", "scroll", "zoom", "stop_computer_control"]) {
+  // tools/list advertises the merged surface; the per-action wire names stay
+  // callable but are not listed, so this check names the merged tools.
+  for (const required of ["screenshot", "recording", "computer", "get_app_state", "click", "type", "key", "scroll", "zoom", "app_script", "stop_computer_control"]) {
     if (!names.has(required)) log(`schema:${required}`, false, "missing");
   }
   log("schema:required-tools-present", true, "all key tools declared");

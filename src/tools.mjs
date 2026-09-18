@@ -485,6 +485,21 @@ export const TOOLS = [
     description: "List recordings and screenshots saved on a computer.",
     inputSchema: { type: "object", properties: { computer: computerParam }, additionalProperties: false },
   },
+  // ---- programmatic interface ----
+  {
+    name: "app_script",
+    description: "macOS, local computer only: run an AppleScript or JXA (JavaScript for Automation) script through osascript — the programmatic interface inside apps that have a scripting dictionary (Finder, Mail, Safari, Calendar, Notes, Reminders, Music, System Events and most native apps). Prefer this over clicking when the app exposes one: deterministic, returns values, needs no Accessibility grant and never touches the pointer. The receipt carries stdout as `result`; a non-zero exit fails `script_error` with stderr, a user-declined consent fails `automation_denied` (the fix is System Settings → Privacy & Security → Automation, not a retry). Refused on ssh/hdc computers (`unsupported_on_transport`) — the remote channel stays computer-use only, never a shell.",
+    inputSchema: {
+      type: "object", required: ["script"],
+      properties: {
+        script: { type: "string", minLength: 1, description: "Script source. For app arguments use `on run argv` in JXA or read them inside the script; keep scripts single-purpose." },
+        language: { enum: ["applescript", "javascript"], description: "applescript (default) or javascript for JXA" },
+        timeout: { type: "number", minimum: 1, maximum: 120, description: "Seconds before the script is killed; default 30." },
+        computer: computerParam,
+      },
+      additionalProperties: false,
+    },
+  },
   // ---- kill switch ----
   {
     name: "stop_computer_control",
@@ -523,6 +538,7 @@ export const REMOTE_TOOLS = new Set([
   "type", "key", "hold_key", "set_value", "focus", "get_value", "select_text", "perform_action", "invoke_menu",
   "read_clipboard", "write_clipboard", "cursor_position",
   "recordingStart", "recordingStop", "recordingStatus", "recordingList",
+  "app_script",
 ]);
 
 /** Map public tool name -> backend method name. */
@@ -608,6 +624,8 @@ const TOOL_ANNOTATIONS = {
   left_mouse_down: INPUT_ANNOTATION, left_mouse_up: INPUT_ANNOTATION,
   type: INPUT_ANNOTATION, key: INPUT_ANNOTATION, hold_key: INPUT_ANNOTATION, invoke_menu: INPUT_ANNOTATION,
   perform_action: INPUT_ANNOTATION, run_actions: INPUT_ANNOTATION,
+  // Scripting — acts on apps through their own dictionaries, not through input.
+  app_script: INPUT_ANNOTATION,
   mouse_move: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
   scroll: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
   set_value: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },

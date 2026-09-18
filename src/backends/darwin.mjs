@@ -840,9 +840,38 @@ export function create({ exec }) {
   }
   async function cursorPosition() { return native("cursor_position"); }
 
+  // ---------- app scripting ----------
+  // The programmatic interface into apps that ship a scripting dictionary:
+  // osascript runs AppleScript (default) or JXA. It never moves the pointer,
+  // needs no Accessibility grant, and returns values instead of "sent"
+  // receipts — which is why it ranks above clicking wherever a dictionary
+  // exists. The script travels as one argv entry; no shell ever parses it.
+  async function appScript({ script, language = "applescript", timeout } = {}) {
+    if (typeof script !== "string" || !script.trim()) {
+      throw Object.assign(new ExecError("app_script needs a non-empty script string"), { code: "bad_args" });
+    }
+    const lang = language === "javascript" ? ["-l", "JavaScript"] : language === "applescript" ? [] : null;
+    if (!lang) throw Object.assign(new ExecError('app_script language must be "applescript" or "javascript"'), { code: "bad_args" });
+    const timeoutMs = Math.min(Math.max(Number(timeout) > 0 ? Number(timeout) : 30, 1), 120) * 1000;
+    const r = await runL("osascript", [...lang, "-e", script], { timeoutMs, maxBuffer: 8 * 1024 * 1024 });
+    if (r.aborted) throw Object.assign(new ExecError("computer request cancelled", r), { code: "cancelled" });
+    if (r.timedOut) throw Object.assign(new ExecError(`app_script timed out after ${Math.round(timeoutMs / 1000)}s — the script or a consent dialog was still open`, r), { code: "script_timeout" });
+    if (r.code !== 0) {
+      const stderr = (r.stderr || r.stdout || "").trim();
+      if (/-1743|not authorized to send apple events|not permitted/i.test(stderr)) {
+        throw Object.assign(new ExecError(`${stderr} — Automation consent was refused or is missing; allow the responsible app to control the target in System Settings → Privacy & Security → Automation`, r), { code: "automation_denied" });
+      }
+      if (/\(-?128\)|user canceled/i.test(stderr)) {
+        throw Object.assign(new ExecError(stderr || "the script was cancelled by the user", r), { code: "script_cancelled" });
+      }
+      throw Object.assign(new ExecError(stderr || `osascript exited ${r.code}`, r), { code: "script_error" });
+    }
+    return { language, result: r.stdout.trim(), stderr: r.stderr.trim() || null };
+  }
+
   // ---------- probe ----------
   async function probe() {
-    const caps = { screenshot: true, recording: true, accessibility_tree: true, clipboard: true, displays: true };
+    const caps = { screenshot: true, recording: true, accessibility_tree: true, clipboard: true, displays: true, app_script: true };
     const perms = {};
     try {
       const ax = await native("permissions");
@@ -1141,6 +1170,7 @@ export function create({ exec }) {
       return native("perform_action", args);
     },
     invoke_menu: async ({ path: menuPath } = {}) => invokeMenu(menuPath),
+    app_script: appScript,
     read_clipboard: readClipboard,
     write_clipboard: writeClipboard,
     cursor_position: cursorPosition,

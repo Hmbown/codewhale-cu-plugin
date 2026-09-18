@@ -1,6 +1,6 @@
 ---
 name: computer-use
-description: Desktop control with accessibility-first observation and actions, pixel fallback, screenshots, zoom, screen recording, and switching between registered computers. Qualified on macOS; Windows, Linux and HarmonyOS backends are experimental.
+description: Desktop control that picks the right interface per step — app scripting (AppleScript/JXA), accessibility-first observation and actions, pixel fallback, screenshots, zoom, screen recording, and switching between registered computers. Qualified on macOS; Windows, Linux and HarmonyOS backends are experimental.
 ---
 
 # Codewhale Computer Use
@@ -31,9 +31,35 @@ the old session remains invalid even when the person allows new sessions.
 The helper's own setup, permission and safety controls belong to the person.
 Do not operate them or approve the host's pending authorization yourself.
 
-## Core loop
+## Choose the interface
 
-Observe once, act once, then verify.
+Clicking is only one way to use a computer. Before each step, pick the
+interface that finishes it verifiably with the fewest moving parts — and
+switch freely between steps:
+
+1. **The host's own tools** — shell, files, HTTP, git, other MCP apps.
+   A step with no reason to be on screen does not belong to this plugin:
+   never drive a terminal window to run a command the host can run itself.
+2. **`app_script`** — AppleScript/JXA into apps that ship a scripting
+   dictionary (most native macOS apps). Deterministic, returns values,
+   needs no Accessibility grant, never touches the pointer.
+3. **`browser`** — CDP for web work: exact selectors, no pixels.
+4. **Accessibility actions** — the GUI loop below. The route for apps
+   with no better interface: background-safe, element-precise, verified.
+5. **Coordinates and pixels** — last resort, when nothing else can
+   express the target.
+
+A step that *can* be clicked still costs more than the same step
+scripted, and a pixel click's `action_sent` proves less than a script's
+return value or a `get_value` read-back. Prefer the interface whose
+receipt can prove the step happened. Switching mid-task is normal —
+script Mail for the message, process it through the host, type the
+answer into a GUI-only editor; `get_app_state` still verifies what a
+script changed.
+
+## The GUI loop
+
+Once the GUI is the right interface: observe once, act once, then verify.
 
 1. If readiness is unknown, call `request_access` once. It names missing
    permissions and missing tools per platform, and never pops dialogs. Its
@@ -222,6 +248,32 @@ unavailable pending session-owned cleanup; use screenshots. HarmonyOS uses
 snapshot-series (no native CLI recorder —
 the receipt says so). `recording_status` / `recording_list` report bytes and
 paths. Screenshots land in the same directory.
+
+## Scripting apps (macOS)
+
+`app_script {script, language?, timeout?}` runs AppleScript (default) or
+JXA (`language:"javascript"`) through osascript on the local computer.
+`result` is the script's stdout; a non-zero exit fails `script_error`
+with stderr, and `script_timeout` means the script — or a consent dialog
+— was still open.
+
+- A first script targeting an app may show the person an Automation
+  consent dialog; that is their choice, not your error. A declined or
+  missing consent fails `automation_denied` (-1743): name the pane
+  (System Settings → Privacy & Security → Automation) and stop — never
+  retry it away.
+- Read the dictionary before writing: `sdef /Applications/Mail.app`
+  through the host's shell, or Script Editor's Library window. A guessed
+  property earns `script_error` (-1728/-2740) — check the dictionary,
+  don't retry with another guess.
+- `tell application "X"` launches X if needed; no `open_application`
+  required, and the script runs while X stays in the background.
+- `do shell script "…"` inside a script works, but prefer the host's own
+  shell for shell work — keep `app_script` for app control and the parts
+  only a dictionary exposes.
+- ssh and hdc computers refuse it (`unsupported_on_transport`): remote
+  channels stay computer-use only, never a shell. Windows and Linux
+  backends fail `unsupported_on_backend` for now.
 
 ## Browser (CDP)
 

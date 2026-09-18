@@ -40,6 +40,11 @@ Never retry a refusal unchanged — re-observe, re-target, or change route.
 | `replay_too_large` | the trajectory exceeds the 200-turn replay cap | split it, or replay a pruned copy |
 | `app_upgrade_required` | the helper predates the feature or is not running | restart/update the Codewhale Computer Use app |
 | `unsupported_on_backend` | tool not implemented on that platform backend | check the platform note in the main skill |
+| `unsupported_on_transport` | `app_script` sent to an ssh/hdc computer — scripting is local-only so a remote channel never becomes a shell | run it on `local`, or use the host's own remote access |
+| `script_error` | osascript exited non-zero; stderr is in the message | read the error, check the app's scripting dictionary (`sdef`), fix the script |
+| `script_timeout` | the script — or a consent dialog — was still open at the deadline | narrow the script; a consent prompt is the person's choice, report it |
+| `script_cancelled` | the script's own dialog was cancelled (-128) | the user declined in-app; stop or ask |
+| `automation_denied` | -1743: the responsible app lacks Automation consent for the target | name System Settings → Privacy & Security → Automation; never retry it away |
 | `permission` / `permissions_denied` | a grant is missing | name the permission and the Settings pane, then stop |
 | `control_stopped` | the kill switch ended this session | report to the user; the session cannot resume |
 | `cancelled` | the host cancelled the request | the input may or may not have landed — observe before retrying |

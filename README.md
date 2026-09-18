@@ -7,9 +7,11 @@
 
 **By Codewhale · macOS beta (notarized app and source) · Windows and Linux experimental, source only**
 
-Let Codewhale see and operate your apps. Read accessible controls, enter
-text, click, scroll and capture the selected app through the same MCP tools.
-The macOS helper keeps permissions and human controls in one menu-bar app.
+Let Codewhale see and operate your apps — through whichever interface fits
+each step: app scripting (AppleScript/JXA) where apps ship a dictionary,
+accessible controls, text entry, click, scroll and capture through the same
+MCP tools. The macOS helper keeps permissions and human controls in one
+menu-bar app.
 
 - **Set up once.** See Accessibility and Screen Recording status, open the
   right Settings pane, then run a check in a disposable practice window.
@@ -136,7 +138,7 @@ command with this checkout's absolute path. Review the local plugin and choose
 **Trust and install**. Kimi copies it into its managed plugin directory and
 enables its MCP server. Run `/reload` in an existing session, then `/mcp`:
 `plugin-codewhale-computer-use:computer` should show **connected** and the
-tool list (36 advertised in 0.8.0; counts vary by host).
+tool list (37 advertised in 0.9.0; counts vary by host).
 `/plugins info codewhale-computer-use` shows the installed version and status.
 This flow was verified with Kimi Code 0.41.0. See the
 [Kimi plugin documentation](https://moonshotai.github.io/kimi-code/en/customization/plugins.html)
@@ -372,6 +374,13 @@ receipts keep working; `tools/list` advertises the merged set only.
   `perform_action` (element's own actions: AXPress / UIA Invoke / AT-SPI / uitest),
   `invoke_menu` (menu items by title path; accessibility only — no key events
   or focus lease; window-targeted items may need a key window).
+- **Scripting** — `app_script` (macOS, local computer): AppleScript or JXA
+  through osascript into apps that ship a scripting dictionary — the
+  programmatic interface to prefer over clicking wherever one exists.
+  Returns stdout as `result`; refusals are typed (`script_error`,
+  `script_timeout`, `automation_denied` for a declined/missing Automation
+  consent). Refused on ssh/hdc computers: a remote channel stays
+  computer-use only, never a shell.
 - **Guidance & policy** — the operating skill ships as MCP resources
   (`skills/list`, `skills/get`, `resources/read` of `skill://codewhale-cu/…`,
   sha256 manifest) and as the `skills/computer-use/` pack in this repo; every

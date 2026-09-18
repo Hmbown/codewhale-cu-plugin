@@ -44,6 +44,9 @@ const ROUTE_INSPECTION_TOOLS = new Set([
   "request_access", "list_displays", "list_apps", "list_windows", "get_app_state", "screenshot",
   "cursor_position", "read_clipboard", "recording_list", "recording_status",
   "find_elements", "get_value", "wait_for",
+  // A script does not act through the observation state this gate protects,
+  // so it must not be held up waiting for a screenshot it never reads.
+  "app_script",
 ]);
 const STATE_CHAR_BUDGET = Number(process.env.CODEWHALE_CU_MAX_STATE_CHARS) > 0
   ? Number(process.env.CODEWHALE_CU_MAX_STATE_CHARS)
@@ -672,6 +675,12 @@ async function callTool(params) {
     // Out-of-process runners (the desktop app for the local computer, the
     // remote agent for ssh computers) get the request over the wire.
     const backendMethod = BACKEND_METHOD[name];
+    // Scripting is honored on the local computer only. Remote agents refuse
+    // it too (their handler gates computerId), so a remote channel can never
+    // be steered into a shell — fail here first to save the hop.
+    if (name === "app_script" && computer.transport !== "local") {
+      throw new ServerError("unsupported_on_transport", `app_script runs on the local computer only — the ${computer.transport} transport stays a computer-use channel, never a shell`);
+    }
     let data;
     const ex = computer.transport === "local" || computer.transport === "ssh" ? await executorFor(computer, binding) : null;
     if (ex?.kind === "app") binding.usedApp = true;
@@ -910,6 +919,11 @@ async function prepareArgs(computer, name, args, resolve, sink) {
     if (out.query != null && typeof out.query !== "string") throw new ServerError("bad_args", "query must be a string");
     if (out.role != null && typeof out.role !== "string") throw new ServerError("bad_args", "role must be a string");
     if (out.ocr_region != null && (!Array.isArray(out.ocr_region) || out.ocr_region.length !== 4)) throw new ServerError("bad_args", "ocr_region must be [x, y, w, h] in screen points");
+  }
+  if (name === "app_script") {
+    if (typeof out.script !== "string" || !out.script.trim()) throw new ServerError("bad_args", "app_script needs a non-empty script string");
+    if (out.language != null && !["applescript", "javascript"].includes(out.language)) throw new ServerError("bad_args", 'app_script language must be "applescript" or "javascript"');
+    if (out.timeout != null && (!Number.isFinite(out.timeout) || out.timeout <= 0 || out.timeout > 120)) throw new ServerError("bad_args", "app_script timeout must be 1..120 seconds");
   }
   return out;
 }
