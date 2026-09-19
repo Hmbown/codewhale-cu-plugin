@@ -57,6 +57,7 @@ function stateFixture(original, names) {
   let script = original.slice(0, original.indexOf(walk));
   script = replaceOne(script, "Add-Type -AssemblyName UIAutomationClient;", "");
   script = replaceOne(script, "Add-Type -AssemblyName UIAutomationTypes;", "");
+  script = replaceOne(script, "[System.Windows.Automation.ClientSettings]::RegisterClientSideProviderAssembly([System.Reflection.AssemblyName]::new('UIAutomationClientsideProviders, Version=4.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35'));", "");
   script = replaceOne(script, "$root = [System.Windows.Automation.AutomationElement]::RootElement;", "");
   const data = Buffer.from(JSON.stringify(names), "utf16le").toString("base64");
   script = replaceOne(script, "$targets = @($root.FindAll([System.Windows.Automation.TreeScope]::Children, [System.Windows.Automation.Condition]::TrueCondition));",

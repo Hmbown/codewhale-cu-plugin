@@ -1193,6 +1193,7 @@ const SKILL_NAME = "computer-use";
 const SKILL_ROOT_URI = `skill://codewhale-cu/SKILL.md`;
 
 function parseFrontmatter(text) {
+  text = text.replace(/\r\n/g, "\n");
   if (!text.startsWith("---\n")) return null;
   const end = text.indexOf("\n---", 4);
   if (end === -1) return null;

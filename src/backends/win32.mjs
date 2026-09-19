@@ -112,6 +112,7 @@ function elementScript(target) {
   const encoded = Buffer.from(JSON.stringify(target), "utf16le").toString("base64");
   return `Add-Type -AssemblyName UIAutomationClient;
 Add-Type -AssemblyName UIAutomationTypes;
+[System.Windows.Automation.ClientSettings]::RegisterClientSideProviderAssembly([System.Reflection.AssemblyName]::new('UIAutomationClientsideProviders, Version=4.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35'));
 $target = [Text.Encoding]::Unicode.GetString([Convert]::FromBase64String('${encoded}')) | ConvertFrom-Json;
 $root = [System.Windows.Automation.AutomationElement]::RootElement;
 $windows = @($root.FindAll([System.Windows.Automation.TreeScope]::Children, [System.Windows.Automation.Condition]::TrueCondition));
@@ -337,6 +338,7 @@ Write-Output ('{"windows": ' + $json + '}');`, { timeoutMs: 25_000 });
       const maxEls = detail === "full" ? 800 : 400;
       const j = await psJson(`Add-Type -AssemblyName UIAutomationClient;
 Add-Type -AssemblyName UIAutomationTypes;
+[System.Windows.Automation.ClientSettings]::RegisterClientSideProviderAssembly([System.Reflection.AssemblyName]::new('UIAutomationClientsideProviders, Version=4.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35'));
 $max = ${maxEls};
 $filter = [Text.Encoding]::Unicode.GetString([Convert]::FromBase64String('${filter}'));
 $root = [System.Windows.Automation.AutomationElement]::RootElement;
