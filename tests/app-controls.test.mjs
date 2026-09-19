@@ -63,7 +63,7 @@ test("human Pause and Stop cannot be bypassed; a lost owner exits and can reopen
     : path.join(dir, "app.sock");
   const daemonOptions = { env: { ...process.env,
     CODEWHALE_CU_STATE_DIR: dir, CODEWHALE_CU_APP_SOCKET: endpoint, CODEWHALE_CU_APP_WARM: "off",
-    CODEWHALE_CU_TEST_BACKEND: path.join(root, "tests/fixtures/session-backend.mjs"), CU_SESSION_CALLS: log, CODEWHALE_CU_CONTROL_FD: "3" }, stdio: ["ignore", "ignore", "pipe", "pipe"] };
+    CODEWHALE_CU_TEST_BACKEND: path.join(root, "tests/fixtures/session-backend.mjs"), CU_SESSION_CALLS: log, CODEWHALE_CU_CONTROL_FD: "3" }, stdio: ["ignore", "ignore", "pipe", "overlapped"] };
   let errors = "", daemon, exited;
   function launch() {
     daemon = spawn(process.execPath, [path.join(root, "app/daemon.mjs")], daemonOptions);

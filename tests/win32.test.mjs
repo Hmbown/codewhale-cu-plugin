@@ -217,3 +217,9 @@ test('win32: semantic mutations carry window and leaf identities and traverse ze
   }
   await assert.rejects(b.perform_action({target,action:"';Invoke-Expression evil"}), /unsupported UIA action/);
 });
+
+test('win32: CLIXML reports the actual PowerShell error rather than its serialization envelope', async () => {
+  const mod=await import('../src/backends/win32.mjs');
+  const b=mod.create({exec:{run:async()=>({code:1,stdout:'',stderr:'#< CLIXML\n<Objs><S S="Error">native failure &lt;target&gt;_x000D__x000A_</S></Objs>'})}});
+  await assert.rejects(b.type({text:'x'}), error => /native failure <target>/.test(error.message) && !/CLIXML|<Objs>/.test(error.message));
+});

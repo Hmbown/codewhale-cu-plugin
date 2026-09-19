@@ -74,7 +74,7 @@ async function closeHost(host) {
 }
 
 before(async () => {
-  daemon = spawn(process.execPath, [path.join(ROOT, "app/daemon.mjs")], { env: {...env, CODEWHALE_CU_CONTROL_FD: "3"}, stdio: ["ignore", "ignore", "pipe", "pipe"] });
+  daemon = spawn(process.execPath, [path.join(ROOT, "app/daemon.mjs")], { env: {...env, CODEWHALE_CU_CONTROL_FD: "3"}, stdio: ["ignore", "ignore", "pipe", "overlapped"] });
   daemon.stderr.on("data", (data) => { daemonErrors += data; });
   await until(async () => !!(await hello({ timeoutMs: 100 })), 5000).catch((err) => { throw new Error(`${err.message}\n${daemonErrors}`); });
 });
@@ -354,7 +354,7 @@ test("an app update re-leases live sessions transparently; an absent app still f
   // Mid-update the app is genuinely absent: the request fails, and that
   // failure is not cached against the session.
   await assert.rejects(appSessionRequest({ tool: "probe", sessionId }), (err) => err.code === "app_unavailable");
-  daemon = spawn(process.execPath, [path.join(ROOT, "app/daemon.mjs")], { env: {...env, CODEWHALE_CU_CONTROL_FD: "3"}, stdio: ["ignore", "ignore", "pipe", "pipe"] });
+  daemon = spawn(process.execPath, [path.join(ROOT, "app/daemon.mjs")], { env: {...env, CODEWHALE_CU_CONTROL_FD: "3"}, stdio: ["ignore", "ignore", "pipe", "overlapped"] });
   daemon.stderr.on("data", (data) => { daemonErrors += data; });
   await until(async () => !!(await hello({ timeoutMs: 100 })), 5000).catch((err) => { throw new Error(`${err.message}\n${daemonErrors}`); });
   const reply = await appSessionRequest({ tool: "get_app_state", sessionId, args: { app_ref: { name: "Survivor again" } } });

@@ -43,7 +43,7 @@ test("retiring daemon cleanup preserves a replacement listener and its run recei
       env: { ...process.env, CODEWHALE_CU_STATE_DIR: directory, CODEWHALE_CU_APP_SOCKET: endpoint,
         CODEWHALE_CU_TEST_BACKEND: fixture, CU_BLOCK_CLEANUP: block ? "1" : "0",
         CU_CLEANUP_STARTED: started, CU_ALLOW_CLEANUP: release, CODEWHALE_CU_CONTROL_FD: "3" },
-      stdio: ["ignore", "ignore", "pipe", "pipe"],
+      stdio: ["ignore", "ignore", "pipe", "overlapped"],
     });
     let errors = ""; child.stderr.on("data", chunk => { errors += chunk; });
     const exited = new Promise(resolve => { child.once("exit", resolve); child.once("error", resolve); });

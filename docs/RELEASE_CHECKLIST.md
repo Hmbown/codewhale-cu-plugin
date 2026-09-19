@@ -272,3 +272,21 @@ receipts belong in a public issue.
   represent their recorded source revision; rebuild before publishing revised
   source. No Windows signing, installed Engine, mixed-DPI, raw-input coexistence
   or fresh-machine acceptance is implied by CI.
+
+## Native sharing-session UX requirement
+
+The macOS purple window-sharing pill is system UI. ScreenCaptureKit streams and
+SCContentSharingPicker provide native selection and sharing status; this is not
+proof of any particular OpenAI implementation. Codewhale currently uses
+ScreenCaptureKit for recording and separate still screenshots for ordinary
+observation; it does not yet use the native sharing picker for a control session.
+
+Acceptance for adopting that interaction: the user selects the app/window, the
+session visibly names that target, and Stop Sharing/window closure/revocation
+invalidates its capture handle and aborts queued and held input. Sharing grants
+observation scope; it does not replace separate input consent. A cosmetic status
+icon or an unrelated recording stream does not meet this requirement. Keep this
+inside the existing helper/session ownership path. Native-picker integration
+remains open and is not part of the Windows CI qualification claim.
+
+Reference: [Apple ScreenCaptureKit overview](https://developer.apple.com/videos/play/wwdc2023/10136/).

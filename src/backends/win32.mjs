@@ -89,6 +89,23 @@ const MODVK = { ctrl: 0x11, control: 0x11, alt: 0x12, shift: 0x10, win: 0x5b, me
 // Compilation, conversion and native-call exceptions must stop before success.
 const USER32_PRELUDE = `$ErrorActionPreference = 'Stop';\nAdd-Type -TypeDefinition @'\n${USER32}\n'@ -ErrorAction Stop;`;
 
+// Initialize UIA proxies from a typed CLR frame. The legacy proxy loader
+// walks ReflectedType on its call stack; PowerShell dynamic frames can be null
+// and leave standard controls exposed as plain panes without action patterns.
+const UIA_PRELUDE = `Add-Type -AssemblyName UIAutomationClient;
+Add-Type -AssemblyName UIAutomationTypes;
+Add-Type -ReferencedAssemblies ([System.Windows.Automation.AutomationElement].Assembly.Location) -TypeDefinition @'
+using System.Windows.Automation;
+public static class CUAutomationProviders {
+  public static void Register() {
+    var assembly = typeof(AutomationElement).Assembly.GetName();
+    assembly.Name = "UIAutomationClientsideProviders";
+    ClientSettings.RegisterClientSideProviderAssembly(assembly);
+  }
+}
+'@;
+[CUAutomationProviders]::Register();`;
+
 /** Coordinate clicks on this backend are always raw pointer events; strategy="a11y" must fail closed rather than silently degrade. */
 function assertEventStrategy(strategy) {
   if (strategy != null && strategy !== "auto" && strategy !== "event") {
@@ -110,9 +127,7 @@ function elementScript(target) {
     throw unsupportedSelector("Windows semantic actions require a fresh observed element with window and element runtime identities");
   }
   const encoded = Buffer.from(JSON.stringify(target), "utf16le").toString("base64");
-  return `Add-Type -AssemblyName UIAutomationClient;
-Add-Type -AssemblyName UIAutomationTypes;
-[System.Windows.Automation.ClientSettings]::RegisterClientSideProviderAssembly([System.Reflection.AssemblyName]::new('UIAutomationClientsideProviders, Version=4.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35'));
+  return `${UIA_PRELUDE}
 $target = [Text.Encoding]::Unicode.GetString([Convert]::FromBase64String('${encoded}')) | ConvertFrom-Json;
 $root = [System.Windows.Automation.AutomationElement]::RootElement;
 $windows = @($root.FindAll([System.Windows.Automation.TreeScope]::Children, [System.Windows.Automation.Condition]::TrueCondition));
@@ -344,9 +359,7 @@ Write-Output ('{"windows": ' + $json + '}');`, { timeoutMs: 25_000 });
       }
       const filter = Buffer.from(app_ref?.name ?? "", "utf16le").toString("base64");
       const maxEls = detail === "full" ? 800 : 400;
-      const j = await psJson(`Add-Type -AssemblyName UIAutomationClient;
-Add-Type -AssemblyName UIAutomationTypes;
-[System.Windows.Automation.ClientSettings]::RegisterClientSideProviderAssembly([System.Reflection.AssemblyName]::new('UIAutomationClientsideProviders, Version=4.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35'));
+      const j = await psJson(`${UIA_PRELUDE}
 $max = ${maxEls};
 $filter = [Text.Encoding]::Unicode.GetString([Convert]::FromBase64String('${filter}'));
 $root = [System.Windows.Automation.AutomationElement]::RootElement;
