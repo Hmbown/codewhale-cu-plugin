@@ -35,7 +35,8 @@ jobs:
         env:
           CU_WINDOWS_DESKTOP_TESTS: '1'
         run: node --test tests/win32-desktop.test.mjs
-      - run: node --test --test-timeout=90000 tests/*.test.mjs
+      - if: ${{ !cancelled() }}
+        run: node --test --test-timeout=90000 tests/*.test.mjs
         timeout-minutes: 8
       - run: node scripts/check-receipts.mjs docs parity/results
 

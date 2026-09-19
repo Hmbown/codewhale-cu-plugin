@@ -16,7 +16,7 @@ test('Windows desktop: observe, set Unicode value, invoke and independently veri
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cu-win-desktop-'));
   const title = `CU fixture ${crypto.randomUUID()}`;
   const receipt = path.join(dir, 'state.json');
-  const child = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-File', fileURLToPath(new URL('./fixtures/windows-desktop.ps1', import.meta.url)), title, receipt], { stdio: ['ignore', 'ignore', 'pipe'], windowsHide: true });
+  const child = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-File', fileURLToPath(new URL('./fixtures/windows-desktop.ps1', import.meta.url)), title, receipt], { stdio: ['ignore', 'ignore', 'pipe'], windowsHide: false });
   let errors = ''; child.stderr.on('data', chunk => { errors += chunk; });
   const exited = new Promise(resolve => child.once('exit', resolve));
   t.after(async () => { if (child.exitCode === null) child.kill(); await exited; fs.rmSync(dir, { recursive: true, force: true }); });
@@ -35,6 +35,7 @@ test('Windows desktop: observe, set Unicode value, invoke and independently veri
   const backend = win32.create();
   const displays = await backend.list_displays();
   assert.ok(displays.length >= 1);
+  t.diagnostic(JSON.stringify({fixture:read(), windows:await backend.list_windows()}));
   const state = await backend.get_app_state({ app_ref: { name: title }, detail: 'full' });
   const edit = state.elements.find(e => e.role === 'Edit');
   const button = state.elements.find(e => e.label === 'Apply fixture');
