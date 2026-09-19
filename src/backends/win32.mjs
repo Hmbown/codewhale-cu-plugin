@@ -149,7 +149,7 @@ export function create(opts = {}) {
 
   async function ps(script, o = {}) {
     throwIfAborted();
-    const encoded = Buffer.from(`$ErrorActionPreference = 'Stop';\n[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false);\n${script}`, "utf16le").toString("base64");
+    const encoded = Buffer.from(`$ErrorActionPreference = 'Stop'; $ProgressPreference = 'SilentlyContinue';\n[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false);\n${script}`, "utf16le").toString("base64");
     return runner("powershell.exe", ["-NoProfile", "-NonInteractive", "-EncodedCommand", encoded], {
       timeoutMs: o.timeoutMs ?? 25_000,
       maxBuffer: 32 * 1024 * 1024,
@@ -161,7 +161,15 @@ export function create(opts = {}) {
     const r = await ps(script, o);
     if (r.aborted) throw Object.assign(new ExecError("computer request cancelled", r), { code: "cancelled" });
     if (r.timedOut) throw new ExecError(`powershell timed out after ${o.timeoutMs ?? 25_000}ms`, r);
-    if (r.code !== 0) throw new ExecError(`powershell.exe exited ${r.code}: ${(r.stderr || r.stdout).trim().slice(0, 300)}`, r);
+    if (r.code !== 0) {
+      const raw = (r.stderr || r.stdout).trim();
+      // EncodedCommand serializes errors as CLIXML; surface the error strings,
+      // not a truncated XML/progress header that conceals the actual failure.
+      const messages = [...raw.matchAll(/<S S="Error">([\s\S]*?)<\/S>/g)].map(m => m[1]
+        .replace(/_x([0-9A-Fa-f]{4})_/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)))
+        .replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&amp;/g, "&"));
+      throw new ExecError(`powershell.exe exited ${r.code}: ${(messages.join("") || raw).slice(0, 1600)}`, r);
+    }
     return r;
   }
 

@@ -30,8 +30,11 @@ jobs:
         if: runner.os == 'Linux'
         timeout-minutes: 10
         run: docker build -t codewhale-cu-linux -f docker/Dockerfile .
-      - name: Windows controlled desktop acceptance
+      - name: Windows control isolation
         if: runner.os == 'Windows'
+        run: node --test tests/app-controls.test.mjs
+      - name: Windows controlled desktop acceptance
+        if: ${{ !cancelled() && runner.os == 'Windows' }}
         env:
           CU_WINDOWS_DESKTOP_TESTS: '1'
         run: node --test tests/win32-desktop.test.mjs

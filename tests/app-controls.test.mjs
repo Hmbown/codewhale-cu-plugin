@@ -108,7 +108,10 @@ test("human Pause and Stop cannot be bypassed; a lost owner exits and can reopen
   const queued=call("type",{text:"must not replay"});
   queued.catch(() => {});
   t.diagnostic("control while input runs: " + JSON.stringify(await control("status")));
-  const paused=await control("pause");
+  const pausing = control("pause"); pausing.catch(() => {});
+  await delay(200);
+  t.diagnostic("control after pause: " + JSON.stringify(await control("status")));
+  const paused=await pausing;
   assert.equal(paused.mode,"paused"); assert.equal(paused.cleanupPending,false);
   assert.equal((await held).ok,false); assert.equal((await queued).ok,false);
   assert.equal((await call("type",{text:"while paused"})).error.code,"control_paused");
