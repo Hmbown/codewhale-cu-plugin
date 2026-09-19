@@ -51,6 +51,45 @@ the old session remains invalid even when the person allows new sessions.
 The helper's own setup, permission and safety controls belong to the person.
 Do not operate them or approve the host's pending authorization yourself.
 
+## Consent on the user's computer
+
+The app, not the tool, is the unit of trust on `local`. The first call that
+targets an application — `open_application`, an `app_ref`, an element or
+`state_id`, or an action on the bound app — refuses `consent_required`
+until the user has decided. Ask them, then record the answer:
+
+- `consent {action:"allow"|"deny", app:"Safari"}` — `app` accepts a name, a
+  bundle id, or `pid:`/a bare number for a pid; `name`, `bundle_id` and
+  `pid` fields work too. Decisions cover this session; `remember:true`
+  persists them for the computer until revoked.
+- `consent {action:"status"}` — the ledger: every recorded app decision and
+  the foreground decision, each marked session or persisted.
+  `consent {action:"revoke", app:"…"}` clears a decision so the next call
+  asks again.
+- A deny is a wall, not a hint: every spelling of the same app fails
+  `app_denied` — the ledger folds name, bundle id and pid together, and a
+  denied app cannot be opened, driven, or killed through this surface.
+  Only the user can change it; never work around it.
+
+Foreground is a second, separate consent. `open_application
+{activate:true}` on macOS — the shared-desktop escalation — additionally
+needs `consent {action:"allow", scope:"foreground"}`; a refusal reads
+`foreground_consent_required`, a recorded denial `foreground_denied`.
+Background control (`activate:false`) needs only the app consent.
+
+Spawned computers are exempt — a task-owned desktop holds nothing of the
+user's. Remote computers are covered by their transport's trust, not this
+ledger. `app_script` keeps its own OS-level consent: Automation prompts
+belong to macOS, not to this ledger.
+
+Where a shared surface is taken at all — a front lease for window-record
+input, a real-pointer gesture, foreground keys, an activation — the helper
+first waits for a gap in the person's hardware input rather than cutting
+between their keystrokes. The wait is bounded, never infinite, and every
+receipt that waited reports `yield_ms`. It is turn-taking, not a lock:
+`user_input_during_lease:true` still means the outcome is contested —
+say so.
+
 ## Choose the interface
 
 Clicking is only one way to use a computer. Before each step, pick the
@@ -199,7 +238,9 @@ Once the GUI is the right interface: observe once, act once, then verify.
     (a failed restore is stated in the receipt — report it to the user), and
     `front_lease:false` when the target was already frontmost and no lease was
     needed. A taken lease also reports its borrow window (`lease_ms`) and the
-    hardware-input clock around it (`idle_before_s`, `idle_after_s`); the
+    hardware-input clock around it (`idle_before_s`, `idle_after_s`); a
+    `yield_ms` field is how long the action first waited for a gap in the
+    person's hardware input. The
     verdict `user_input_during_lease:true` means the person's own input
     arrived mid-lease — treat the outcome as contested, re-observe, and say
     so. `key` chords that had no window to route through fall back to
@@ -207,7 +248,9 @@ Once the GUI is the right interface: observe once, act once, then verify.
     Only hover and held-button tools still need `activate:true`.
   - Shared-desktop gestures and foreground keyboard delivery require explicit
     user authorization for exclusive desktop use, followed by
-    `open_application(activate:true)`. Do not select it merely to work around a
+    `open_application(activate:true)` — which itself needs the foreground
+    consent (`consent {action:"allow", scope:"foreground"}`; see Consent on
+    the user's computer). Do not select it merely to work around a
     background refusal. Receipts identify `input_scope: "shared-desktop"`;
     pointer gestures use the physical cursor, even if it is restored afterward.
     Keys and raw pointer gestures stop when another app takes focus. Never

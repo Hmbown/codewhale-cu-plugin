@@ -178,7 +178,7 @@ export function leaseVerdict(r) {
 export function leaseAccounting(r) {
   if (r?.front_lease !== true) return {};
   const out = {};
-  for (const k of ["lease_ms", "idle_before_s", "idle_after_s"]) {
+  for (const k of ["lease_ms", "idle_before_s", "idle_after_s", "yield_ms"]) {
     if (Number.isFinite(r[k])) out[k] = r[k];
   }
   if (typeof r.user_input_during_lease === "boolean") out.user_input_during_lease = r.user_input_during_lease;
@@ -196,6 +196,16 @@ export function create({ exec }) {
   // app instead of a frozen still. CODEWHALE_CU_PREVIEW_REFRESH_MS=0 disables
   // the loop (tests, headless); the floor keeps a hostile value tolerable.
   const state = { activeDisplay: 1, lastRaster: null, inputApp: null, foregroundInput: false, previewEnabled: true, pointer: null, pointerLease: null };
+  // Shared-surface politeness: front leases, real-pointer gestures,
+  // foreground keys and activations wait for a gap in the user's hardware
+  // input rather than interleave with their typing. The helper reads the
+  // same HID idle clock it uses for interference accounting. gap<=0 turns
+  // the wait off entirely; wait_ms bounds it so an active user cannot
+  // starve the agent. Every wait is reported as yield_ms in the receipt.
+  const yieldArgs = {
+    yield_gap_ms: Number(process.env.CODEWHALE_CU_YIELD_GAP_MS ?? 450),
+    yield_wait_ms: Number(process.env.CODEWHALE_CU_YIELD_WAIT_MS ?? 2500),
+  };
   let previewLoop = null;
   let previewBusy = false;
   function stopPreviewLoop() { if (previewLoop) { clearInterval(previewLoop); previewLoop = null; } }
@@ -257,7 +267,7 @@ export function create({ exec }) {
     }
     if (tool === "pointer_sequence" && !args.app_scoped) requireSharedPointer();
     const helper = await nativeHelper();
-    const r = await runL(helper, [JSON.stringify({ tool, args: { ...args, input_app_ref: state.inputApp, foreground_input: state.foregroundInput, owner_pipe: true } })], { timeoutMs: 20_000, ownerPipe: true });
+    const r = await runL(helper, [JSON.stringify({ tool, args: { ...args, ...yieldArgs, input_app_ref: state.inputApp, foreground_input: state.foregroundInput, owner_pipe: true } })], { timeoutMs: 20_000, ownerPipe: true });
     if (r.aborted || r.timedOut || r.code !== 0) {
       const error = new ExecError(r.aborted ? "computer request cancelled" : r.timedOut ? "native accessibility helper timed out" : r.stderr.trim() || "native accessibility helper failed", r);
       if (r.aborted) error.code = "cancelled";
@@ -294,7 +304,7 @@ export function create({ exec }) {
     if (!exec.runInputLease) throw new ExecError("This executor cannot safely own held input; update Computer Use");
     if ((await native("input_capabilities"))?.input_lease !== 1) throw new ExecError("The native helper needs an update for disconnect-safe held input");
     const helper = await nativeHelper();
-    return exec.runInputLease(helper, [JSON.stringify({ tool, args: { ...args, input_app_ref: state.inputApp, foreground_input: state.foregroundInput, owner_pipe: true, input_lease: true } })]);
+    return exec.runInputLease(helper, [JSON.stringify({ tool, args: { ...args, ...yieldArgs, input_app_ref: state.inputApp, foreground_input: state.foregroundInput, owner_pipe: true, input_lease: true } })]);
   }
 
   async function updatePreview(show = false) {
@@ -359,6 +369,7 @@ export function create({ exec }) {
       foreground_taken: !!r?.foreground_taken,
       ...(r?.foreground_before ? { foreground_before: r.foreground_before } : {}),
       ...(r?.foreground_after ? { foreground_after: r.foreground_after } : {}),
+      ...(Number.isFinite(r?.yield_ms) && r.yield_ms > 0 ? { yield_ms: r.yield_ms } : {}),
     };
   }
 
@@ -445,7 +456,10 @@ export function create({ exec }) {
   async function withPressedKey(code, flags, action) {
     const lease = await nativeLease("key_event", { code, flags, down: true });
     try {
-      return await action();
+      await action();
+      // The acknowledgement carries the yield_ms the helper waited for a
+      // hardware-input gap before posting the press.
+      return lease.receipt;
     } finally {
       await withSignal(null, () => lease.release());
     }
@@ -780,7 +794,8 @@ export function create({ exec }) {
       previewBusy = true;
       updatePreview(true).catch(() => {}).finally(() => { previewBusy = false; });
     }
-    return { launched, activate, keyboard_delivery: activate ? "foreground-guarded" : "process", input_scope: activate ? "shared-desktop" : "application", shared_pointer: !!activate, isolated_desktop: false, url: urlArg ?? null, resolved: p?.found ? { name: p.name, pid: p.pid, bundle_id: p.bundle_id, frontmost: p.frontmost } : null };
+    return { launched, activate, keyboard_delivery: activate ? "foreground-guarded" : "process", input_scope: activate ? "shared-desktop" : "application", shared_pointer: !!activate, isolated_desktop: false, url: urlArg ?? null, resolved: p?.found ? { name: p.name, pid: p.pid, bundle_id: p.bundle_id, frontmost: p.frontmost } : null,
+      ...(Number.isFinite(p?.yield_ms) && p.yield_ms > 0 ? { yield_ms: p.yield_ms } : {}) };
   }
 
   /**
@@ -1120,18 +1135,22 @@ export function create({ exec }) {
           if (!/no focused window|window-routed background keys|bg_dispatch/.test(error.message)) throw error;
         }
       }
+      let yieldMs = 0;
       for (let i = 0; i < n; i++) {
-        await withPressedKey(code, flags, () => {});
+        const press = await withPressedKey(code, flags, () => {});
+        if (Number.isFinite(press?.yield_ms)) yieldMs = Math.max(yieldMs, press.yield_ms);
         if (i < n - 1) await wait(30);
       }
       return { action_sent: true, key, code, keyboard_delivery: state.foregroundInput ? "foreground-guarded" : "process", repeat: n,
+        ...(yieldMs > 0 ? { yield_ms: yieldMs } : {}),
         ...(flags !== 0 && !state.foregroundInput ? { note: "process delivery (no focus lease was taken); menu key equivalents can be dropped without a key window. Verify the effect before retrying, or use invoke_menu for app menu commands." } : {}) };
     },
     hold_key: async ({ text, duration } = {}) => {
       const { flags, code, key } = parseChord(text);
       const d = Math.max(0.05, Math.min(30, Number(duration) || 1));
-      await withPressedKey(code, flags, () => wait(d * 1000));
-      return { action_sent: true, key, keyboard_delivery: state.foregroundInput ? "foreground-guarded" : "process", heldSec: d };
+      const press = await withPressedKey(code, flags, () => wait(d * 1000));
+      return { action_sent: true, key, keyboard_delivery: state.foregroundInput ? "foreground-guarded" : "process", heldSec: d,
+        ...(Number.isFinite(press?.yield_ms) && press.yield_ms > 0 ? { yield_ms: press.yield_ms } : {}) };
     },
     set_value: async (args = {}) => {
       if (args.target?.type !== "element") throw new ExecError("set_value needs an element target — {type:'element',index} from get_app_state");

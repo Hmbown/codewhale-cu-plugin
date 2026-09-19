@@ -293,6 +293,32 @@ a frozen still; its cursor is separate from the hardware pointer. Close the
 panel or use `enabled: false` to hide it — and the session that showed the
 panel hides it when it closes, so no panel outlives its session.
 
+### Consent and shared-machine manners on the local computer
+
+On `local`, the app — not the tool — is the unit of trust. The first call
+that targets an application (`open_application`, an `app_ref`, an element or
+`state_id`, or an action on the bound app) refuses `consent_required` until
+the user decides; the model asks them and records the answer with
+`consent {action:"allow"|"deny", app:"…"}`. Decisions cover the session by
+default and persist with `remember:true`; `consent {action:"status"}`
+shows the ledger and `revoke` clears it. A denial is a wall: the ledger
+folds name, bundle id and pid together, so a denied app fails `app_denied`
+under every spelling and cannot be opened, driven, or killed through this
+surface. `open_application activate:true` — the shared-desktop escalation —
+separately requires `consent {action:"allow", scope:"foreground"}`. Spawned
+computers are exempt (a task-owned desktop holds nothing of the user's);
+remote computers are covered by their transport's trust; `app_script` keeps
+macOS's own Automation consent.
+
+Whenever a shared surface is taken — a front lease for window-record input,
+a real-pointer gesture, foreground keys, or an activation — the helper waits
+for a gap in the user's hardware input first (bounded, ~450 ms gap within a
+2.5 s window by default; `CODEWHALE_CU_YIELD_GAP_MS` /
+`CODEWHALE_CU_YIELD_WAIT_MS`). Receipts report the wait as `yield_ms` — the
+agent takes turns with the person rather than cutting between their
+keystrokes. Turn-taking, not a lock: `user_input_during_lease` still reports
+input that arrived mid-action.
+
 ### Browser control (CDP)
 
 `browser` drives a Chromium-family browser over the Chrome DevTools protocol

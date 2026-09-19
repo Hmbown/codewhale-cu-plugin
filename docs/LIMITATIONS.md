@@ -1,5 +1,38 @@
 # Limitations
 
+## Per-app consent and user yield (0.11.0)
+
+The consent ledger makes the app — not the tool — the unit of trust on
+`local`, and the yield machinery makes shared-surface moments wait for a
+gap in the user's hardware input. What neither is:
+
+- **The ledger is a model-level gate, not a sandbox.** It lives in the MCP
+  dispatch path: every first contact refuses `consent_required` until a
+  decision exists, and a deny covers every spelling of the app. A
+  determined agent with another channel (a different MCP server, a shell,
+  `app_script` driving System Events) can still reach the app — the honest
+  claim is no accidental touches and a deny this surface actually enforces.
+- **Consent granularity is the app, not the action.** There is no
+  per-action sensitivity policy yet (send/purchase/delete confirmations) —
+  an allowed app can be driven to its consequential edges. That boundary
+  belongs in host policy; receipts name what happened so the host can gate
+  it.
+- **Yield is turn-taking, not a lock.** The wait for a hardware-input gap
+  is bounded (`CODEWHALE_CU_YIELD_WAIT_MS`, default 2500; the gap is
+  `CODEWHALE_CU_YIELD_GAP_MS`, default 450, and 0 disables). A busy user
+  cannot starve the agent — after the deadline it takes its turn anyway.
+  Input arriving mid-action is still reported (`user_input_during_lease`),
+  not prevented.
+- **Foreground consent is darwin-only.** Windows and Linux have no
+  background/foreground split — raw input there is foreground by nature,
+  so `activate:true` carries no second gate on those backends.
+- **Consent persists per computer id.** `remember:true` writes
+  `consent.json` under the state dir keyed by computer id — a re-registered
+  computer with a new id asks again; a stolen id inherits its ledger.
+- **`app_script` is deliberately outside the ledger** — Automation consent
+  is macOS's own per-app boundary, enforced by the OS on the responsible
+  process.
+
 ## Spawned computers (0.10.0)
 
 `computer {action:"spawn", transport:"docker"}` provisions a disposable Linux

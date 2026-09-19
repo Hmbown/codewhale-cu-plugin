@@ -109,6 +109,12 @@ try {
   const apps = r.parsed?.apps ?? [];
   const someApp = apps.find((a) => a.windowCount > 0) ?? apps.find((a) => a.frontmost) ?? apps[0];
   if (someApp) {
+    // The consent ledger gates first app contact on the local computer —
+    // smoke exercises the real flow: refuse, record the user's allow, retry.
+    const gated = await tool("get_app_state", { app_ref: { pid: someApp.pid } });
+    log("consent_required on first app contact", gated.parsed?.error?.code === "consent_required", `code=${gated.parsed?.error?.code}`);
+    const c = await tool("consent", { action: "allow", app: `pid:${someApp.pid}` });
+    log("consent allow", c.parsed?.ok === true, `${someApp.name}: keys=${JSON.stringify(c.parsed?.keys ?? c.parsed?.error)}`);
     const st = await tool("get_app_state", { app_ref: { pid: someApp.pid } });
     log("get_app_state", st.parsed?.ok === true && st.parsed?.elements?.length > 0, `${someApp.name}: ${st.parsed?.elements?.length} elements, state_id=${st.parsed?.state_id}`);
     globalThis.__state = st.parsed;

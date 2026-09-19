@@ -7,6 +7,7 @@ import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
 import * as registry from "../src/registry.mjs";
+import * as consent from "../src/consent.mjs";
 import { backendFor, installRemoteAgent, executorFor, closeAppSession, routeFingerprint, closeSshChannel, SESSION_ID } from "../src/transport.mjs";
 import { spawnDockerComputer, destroyDockerComputer, destroySessionSpawns } from "../src/spawn.mjs";
 import { TOOLS, TOOL_NAMES, REQUIRED_ARGS, ELEMENT_ONLY_TARGET, READ_ONLY_TOOLS, REMOTE_TOOLS, BACKEND_METHOD, resolveTool, parseGrant, MERGED_EXPANSION } from "../src/tools.mjs";
@@ -39,6 +40,8 @@ const appStates = new Map();
 const latestStateByComputer = new Map();
 /** computerId -> last raster metadata {file, scale, origin} */
 const lastRasters = new Map();
+/** computerId -> app_ref the computer's input is bound to (set by open_application) */
+const boundApps = new Map();
 /** computerId -> route-bound session resources; the registry owns configuration. */
 const backendCache = new Map();
 const ROUTE_INSPECTION_TOOLS = new Set([
@@ -88,6 +91,10 @@ function invalidateObservations(id) {
 async function retireBinding(id) {
   const binding = backendCache.get(id);
   invalidateObservations(id);
+  boundApps.delete(id);
+  // A route change means the computer behind the id changed: grants made for
+  // the old destination must not ride to the new one.
+  consent.dropSession(id);
   if (!binding) return;
   closeSshChannel(binding);
   // Mark unusable before awaiting cleanup. A failure, or a catalog rollback,
@@ -160,7 +167,7 @@ function resolveElement(target, computer) {
 }
 
 class ServerError extends Error {
-  constructor(code, message) { super(message); this.code = code; }
+  constructor(code, message, extra = null) { super(message); this.code = code; if (extra) this.extra = extra; }
 }
 
 /** Map raster-pixel coordinates to screen points using the bound raster. */
@@ -450,6 +457,153 @@ async function waitFor(computer, args, switched) {
   return { content: [{ type: "text", text: JSON.stringify(receipt(computer, { ok: true, tool: "wait_for", switched, matched: false, timed_out: true, state, polls, elapsed_ms: Date.now() - started, ...(lastError ? { last_error: lastError } : {}), note: state === "absent" ? "Matches remained until the deadline." : "No match appeared before the deadline. Observe the app or widen the query." })) }] };
 }
 
+// ---------- per-app consent ----------
+// The app, not the tool, is the unit of trust on the local computer: the
+// first call that targets an application — binding input to it, observing it
+// by name, or acting through a bound/element target — refuses
+// consent_required until the user records a decision with the consent tool.
+// Spawned computers are exempt: a task-owned desktop holds nothing of the
+// user's, and remote machines are covered by the transport's own trust.
+
+/** Tools whose implicit target is the bound app when no explicit app_ref or element is given. */
+const BOUND_TARGET_TOOLS = new Set([
+  "get_app_state", "find_elements", "wait_for", "list_windows", "screenshot", "zoom",
+  "recording_start", "preview", "invoke_menu",
+  "type", "key", "hold_key",
+  "left_click", "double_click", "triple_click", "right_click", "middle_click",
+  "left_click_drag", "mouse_move", "left_mouse_down", "left_mouse_up", "scroll",
+  "set_value", "focus", "get_value", "select_text", "perform_action",
+]);
+
+/** App identity the way consent args carry it (app string, or explicit fields). */
+function refFromConsentArgs(args) {
+  const ref = {};
+  if (typeof args.bundle_id === "string" && args.bundle_id.trim()) ref.bundle_id = args.bundle_id.trim();
+  if (typeof args.name === "string" && args.name.trim()) ref.name = args.name.trim();
+  if (Number.isInteger(args.pid) && args.pid > 0) ref.pid = args.pid;
+  if (typeof args.app === "string" && args.app.trim() && !Object.keys(ref).length) {
+    const s = args.app.trim();
+    if (/^pid:\d+$/i.test(s)) ref.pid = Number(s.slice(4));
+    else if (/^\d+$/.test(s)) ref.pid = Number(s);
+    // ".app" is a filename spelling and always means a name — checked
+    // before the reverse-DNS shape it also satisfies.
+    else if (/\.app$/i.test(s)) ref.name = s.replace(/\.app$/i, "");
+    else if (/^[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+$/.test(s) && !s.includes(" ")) ref.bundle_id = s;
+    else ref.name = s;
+  }
+  return ref;
+}
+
+/**
+ * Best-effort identity enrichment through list_apps — the same match rules
+ * the native resolver uses (pid exact; name and bundle id case-insensitive).
+ * Returns {name, pid, bundle_id} or null. Only consulted when a decision is
+ * missing, so the ledger sees the same app under every spelling the model
+ * might use.
+ */
+async function resolveAppIdentity(computer, ref) {
+  if (!ref || !Object.keys(ref).length) return null;
+  let apps = null;
+  try {
+    const res = await callTool({ name: "list_apps", arguments: { computer: computer.id } });
+    const body = JSON.parse(res.content[0].text);
+    apps = body?.apps ?? null;
+  } catch { return null; }
+  if (!Array.isArray(apps)) return null;
+  const wantName = ref.name?.toLowerCase(), wantBundle = ref.bundle_id?.toLowerCase();
+  const hit = apps.find((a) =>
+    (ref.pid != null && a.pid === ref.pid) ||
+    (wantBundle && String(a.bundle_id ?? "").toLowerCase() === wantBundle) ||
+    (wantName && String(a.name ?? "").toLowerCase() === wantName));
+  return hit ? { name: hit.name ?? null, pid: hit.pid ?? null, bundle_id: hit.bundle_id ?? null } : null;
+}
+
+/**
+ * Check the ledger for one app reference: direct keys first, then — only when
+ * undecided — the resolved running-app identity so a grant made under one
+ * spelling covers the others. Returns {verdict, ref} where ref is the richest
+ * identity known (for the refusal's app field and alias merging).
+ */
+async function consentForRef(computer, ref) {
+  const direct = consent.decisionFor(computer.id, consent.appKeys(ref));
+  if (direct.state !== "undecided") return { verdict: direct, ref };
+  const resolved = await resolveAppIdentity(computer, ref);
+  if (!resolved) return { verdict: direct, ref };
+  const widened = consent.decisionFor(computer.id, consent.appKeys(resolved));
+  return { verdict: widened, ref: resolved };
+}
+
+/**
+ * The consent gate, run inside dispatch before any backend call. Returns
+ * {grant} describing the decision that let the call through (used to merge
+ * aliases after open_application resolves the real identity), or null when
+ * the call targets no app. Throws ServerError consent_required / app_denied /
+ * foreground_consent_required / foreground_denied.
+ */
+async function consentCheck(computer, name, args) {
+  if (computer.transport !== "local" || computer.owned === true) return null;
+  const refs = [];
+  if (name === "open_application" || name === "kill_app") {
+    // Both name the target app with name/bundle_id/pid args — a denied app
+    // must not be terminable any more than it must be bindable.
+    const ref = {};
+    if (Number.isInteger(args.pid)) ref.pid = args.pid;
+    else if (typeof args.bundle_id === "string" && args.bundle_id) ref.bundle_id = args.bundle_id;
+    else if (typeof args.name === "string" && args.name) ref.name = args.name;
+    if (Object.keys(ref).length) refs.push(ref);
+  } else {
+    if (args.app_ref && typeof args.app_ref === "object") refs.push(args.app_ref);
+    for (const key of ["target", "from_target", "to"]) {
+      if (args[key]?.type === "element") {
+        try { refs.push(resolveElement(args[key], computer).state.app_ref); } catch { /* the element gate reports its own staleness */ }
+      }
+    }
+    if (args.state_id != null) {
+      const st = appStates.get(args.state_id);
+      if (st?.computerId === computer.id) refs.push(st.app_ref);
+    }
+    const bound = boundApps.get(computer.id);
+    if (!refs.length && bound && BOUND_TARGET_TOOLS.has(name)) refs.push(bound);
+  }
+  let grant = null;
+  for (const ref of refs) {
+    // A state or element whose backend reported no identity at all has no app
+    // to consent to — observation never named one either, so there is nothing
+    // a recorded decision could match.
+    if (!ref || !consent.appKeys(ref).length) continue;
+    const { verdict, ref: known } = await consentForRef(computer, ref);
+    const desc = known.name ?? known.bundle_id ?? (known.pid ? `pid ${known.pid}` : "the application");
+    const arg = known.bundle_id ?? known.name ?? (known.pid ? `pid:${known.pid}` : "the app");
+    if (verdict.state === "denied") {
+      throw new ServerError("app_denied",
+        `the user denied access to ${desc} on this computer — do not work around it; only they can change it (consent {action:"revoke"}).`,
+        { app: known });
+    }
+    if (verdict.state === "undecided") {
+      throw new ServerError("consent_required",
+        `Codewhale needs the user's permission to use ${desc} on this computer — ask them, then record their answer with consent {action:"allow"|"deny", app:"${arg}"}.`,
+        { app: known });
+    }
+    grant = { ref: known, persisted: verdict.persisted === true };
+  }
+  // Taking the shared pointer/focus is a second, separate consent: the first
+  // activate:true on darwin is the moment the agent stops being background.
+  if (name === "open_application" && args.activate === true && (computer.platform ?? computer.platformHint) === "darwin") {
+    const fg = consent.foregroundDecision(computer.id);
+    if (fg.state === "denied") {
+      throw new ServerError("foreground_denied",
+        `the user denied shared-desktop (foreground) control on this computer — continue with open_application activate:false (background control) or ask them to reconsider.`,
+        { scope: "foreground" });
+    }
+    if (fg.state === "undecided") {
+      throw new ServerError("foreground_consent_required",
+        `open_application activate:true would take this Mac's shared pointer and focus — ask the user, then record their answer with consent {action:"allow"|"deny", scope:"foreground"}. Background control (activate:false) needs no such consent.`,
+        { scope: "foreground" });
+    }
+  }
+  return grant ? { grant } : null;
+}
+
 // ---------- tool dispatch ----------
 async function callTool(params) {
   const requested = params.name;
@@ -646,6 +800,39 @@ async function callTool(params) {
     return { content: [{ type: "text", text: JSON.stringify(fail(null, err.code ?? "registry_error", err.message)) }], isError: true };
   }
 
+  // Consent tools are the ledger itself — server-side, no backend dispatch.
+  // They still resolve the target computer the same way every other tool does.
+  if (name === "consent_status") {
+    return { content: [{ type: "text", text: JSON.stringify(receipt(computer, { ok: true, tool: name, switched, ...consent.status(computer.id) })) }] };
+  }
+  if (name === "consent_allow" || name === "consent_deny" || name === "consent_revoke") {
+    try {
+      const scope = args.scope === "foreground" ? "foreground" : "app";
+      const verb = { consent_allow: "allow", consent_deny: "deny" }[name] ?? null;
+      if (scope === "foreground") {
+        const r = verb ? consent.recordForeground(computer.id, verb, { remember: args.remember === true })
+          : consent.revokeForeground(computer.id);
+        return { content: [{ type: "text", text: JSON.stringify(receipt(computer, { ok: true, tool: name, switched, scope, ...r, note: verb ? `Shared-desktop (foreground) control ${verb === "allow" ? "allowed" : "denied"} for ${r.persisted ? "this computer until revoked" : "this session"}.` : "Foreground decision removed — the next activate:true asks again." })) }] };
+      }
+      const ref = refFromConsentArgs(args);
+      const keys = consent.appKeys(ref);
+      if (!keys.length) throw new ServerError("bad_args", `consent ${name.slice(8)} needs an app identity (app, name, bundle_id or pid) — or scope:"foreground"`);
+      // Fold in the resolved running-app identity so the decision holds under
+      // every spelling — and a deny cannot be sidestepped by asking for the
+      // same app a different way.
+      const resolved = await resolveAppIdentity(computer, ref);
+      const allKeys = resolved ? [...new Set([...keys, ...consent.appKeys(resolved)])] : keys;
+      if (verb) {
+        const r = consent.record(computer.id, allKeys, verb, { remember: args.remember === true, name: resolved?.name ?? ref.name ?? null });
+        return { content: [{ type: "text", text: JSON.stringify(receipt(computer, { ok: true, tool: name, switched, scope, decision: verb, app: resolved ?? ref, keys: allKeys, persisted: r.persisted, note: `${resolved?.name ?? ref.name ?? ref.bundle_id ?? `pid ${ref.pid}`} ${verb === "allow" ? "allowed" : "denied"} ${r.persisted ? "until revoked" : "for this session"}.` })) }] };
+      }
+      const r = consent.revoke(computer.id, allKeys);
+      return { content: [{ type: "text", text: JSON.stringify(receipt(computer, { ok: true, tool: name, switched, scope, app: resolved ?? ref, keys: allKeys, ...r, note: "Decisions removed — the next call targeting this app asks again." })) }] };
+    } catch (err) {
+      return { content: [{ type: "text", text: JSON.stringify(fail(computer, err.code ?? "consent_error", err.message ?? String(err), { tool: name, switched })) }], isError: true };
+    }
+  }
+
   let binding;
   let dispatched = false;
   try {
@@ -653,6 +840,10 @@ async function callTool(params) {
     if (binding.needsObservation && !ROUTE_INSPECTION_TOOLS.has(name)) {
       throw new ServerError("computer_observation_required", "Computer route changed — call screenshot or get_app_state on the registered target before acting");
     }
+    // Per-app consent: the first call that targets an application on the local
+    // computer must carry a recorded user decision. open_application returns
+    // the grant so its resolved identity can be aliased below.
+    const gateResult = await consentCheck(computer, name, args);
     if (name === "run_actions") {
       const steps = args.steps;
       if (!Array.isArray(steps) || steps.length < 1 || steps.length > 8) throw new ServerError("bad_args", "run_actions needs 1..8 steps");
@@ -828,6 +1019,13 @@ async function callTool(params) {
     // index must never silently address the previous app's observation —
     // under a concurrent user that mistake clicks the wrong window.
     if (name === "open_application" && data?.resolved) {
+      boundApps.set(computer.id, data.resolved);
+      // The decision that let this open through covers the resolved identity
+      // under its other spellings too — a later bundle-id or name request for
+      // the same app must not prompt again.
+      if (gateResult?.grant) {
+        consent.alias(computer.id, consent.appKeys(data.resolved), { persisted: gateResult.grant.persisted, name: data.resolved.name ?? null });
+      }
       const latestId = latestStateByComputer.get(computer.id);
       const latest = latestId ? appStates.get(latestId) : null;
       if (latest) {
@@ -887,6 +1085,9 @@ async function callTool(params) {
     }
     return { content };
   } catch (err) {
+    // A failed open_application cleared the backend's input binding before it
+    // attempted anything — the tracked bound app must not claim otherwise.
+    if (name === "open_application") boundApps.delete(computer.id);
     let outcomeUnknown = !!err.requestDispatched;
     if (dispatched && !outcomeUnknown) {
       // A transport/backend can fail after delivering input. Reconcile its
@@ -901,6 +1102,7 @@ async function callTool(params) {
     const grant = name === "request_access" ? grantReport() : null;
     return { content: [{ type: "text", text: JSON.stringify(fail(computer, err.code ?? "tool_error", err.message ?? String(err), {
       tool: name, switched,
+      ...(err.extra ?? {}),
       ...(grant ? { grant } : {}),
       ...(outcomeUnknown ? { request_dispatched: true, outcome_unknown: true,
         note: "Dispatch to the previous route was attempted; its effect is unconfirmed. Observe the current target; do not automatically retry the action." } : {}),

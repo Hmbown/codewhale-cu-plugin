@@ -35,6 +35,10 @@ Never retry a refusal unchanged — re-observe, re-target, or change route.
 | `selector_not_found` | no element matches the CSS selector on the current page | re-check the selector against a fresh `browser {action:"screenshot"}` or `browser {action:"status"}` |
 | `unsupported_runtime` | this Node has no global WebSocket (browser transport) | use Node 22+ for the daemon/server running the plugin |
 | `not_granted` | the session's capability grant (`CODEWHALE_CU_GRANT`) does not include this tool | work inside the grant; the host narrowed it deliberately |
+| `consent_required` | no user decision exists for this app on the local computer | ask the user, then record it: `consent {action:"allow"\|"deny", app:"…"}` |
+| `app_denied` | the user denied this app — the deny covers every spelling of it | do not work around it; only they can `consent {action:"revoke"}` |
+| `foreground_consent_required` | `activate:true` needs the separate shared-pointer decision | ask, then `consent {action:"allow"\|"deny", scope:"foreground"}` — or keep working background (`activate:false`) |
+| `foreground_denied` | the user denied shared-desktop (foreground) control | work background-only; do not retry `activate:true` |
 | `frame_refused` | the app refused both the position and the size write | the window is fullscreen, tiled or otherwise not movable by the app |
 | `trajectory_not_found` | no trajectory file matches the id (or none exist) | `trajectory {action:"status"}` lists recent files |
 | `replay_too_large` | the trajectory exceeds the 200-turn replay cap | split it, or replay a pruned copy |

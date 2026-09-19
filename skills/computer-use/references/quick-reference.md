@@ -58,10 +58,20 @@ no better interface.
 - `browser {action:"status"}` · `browser {action:"stop"}` — tabs/active tab; close this session's tab (last one out closes the browser).
 
 ## Session
+- `consent {action:"status"|"allow"|"deny"|"revoke", app?|scope?}` — the
+  per-app decision ledger on `local`. First contact with an app refuses
+  `consent_required`; record the user's answer (`remember:true` persists).
+  `scope:"foreground"` is the separate shared-pointer decision
+  `open_application activate:true` needs. A denied app fails `app_denied`
+  under every spelling; only the user can revoke it.
 - `list_sessions` — live sessions on this machine (content-free) and the user's control mode.
 - `trajectory {action:"start"|"stop"|"status"|"replay", id?, dry_run?}` — record this session's tool calls to a local JSONL; replay re-enters the normal pipeline and stops at the first refusal.
 - `stop_computer_control {reason?}` — kill switch; input for this session ends.
 - Capability grant (host config): `CODEWHALE_CU_GRANT="read-only"` or a tool list — the session can never see or call beyond it (`not_granted`).
+
+Receipt fields worth reading: `yield_ms` is how long an action waited for a
+gap in the user's hardware input before taking a shared surface; a deny
+never carries `action_sent`.
 
 ## Recipes
 

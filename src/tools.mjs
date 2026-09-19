@@ -97,6 +97,43 @@ export const TOOLS = [
     description: "Remove a registered computer. 'local' cannot be removed.",
     inputSchema: { type: "object", required: ["computer"], properties: { computer: { type: "string" } }, additionalProperties: false },
   },
+  {
+    name: "consent",
+    description: "Per-app consent on the local computer. Any call that targets an app — open_application, an app_ref, an element, or an action on the bound app — refuses consent_required until the user decides; record their answer here. action status | allow | deny | revoke. app is a name or bundle id (or pid:/number for a pid); scope 'foreground' is the separate darwin decision for taking the shared pointer (open_application activate:true). Decisions apply to this session; remember:true persists them.",
+    inputSchema: {
+      type: "object",
+      required: ["action"],
+      properties: {
+        action: { enum: ["status", "allow", "deny", "revoke"] },
+        app: { type: "string", description: "App identity: name ('Safari'), bundle id ('com.apple.Safari'), or pid ('pid:1234')" },
+        name: { type: "string" }, bundle_id: { type: "string" }, pid: { type: "integer" },
+        scope: { enum: ["app", "foreground"], description: "app (default): consent to use one application. foreground: consent to take the shared pointer/focus (darwin activate:true)" },
+        remember: { type: "boolean", description: "Persist the decision across sessions (default: this session only)" },
+        computer: computerParam,
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "consent_status",
+    description: "List recorded app-consent decisions for a computer (persisted and this session's) plus the foreground decision.",
+    inputSchema: { type: "object", properties: { computer: computerParam }, additionalProperties: false },
+  },
+  {
+    name: "consent_allow",
+    description: "Record an allow decision: app (name/bundle_id/pid/app string) or scope:'foreground'. remember:true persists it.",
+    inputSchema: { type: "object", properties: { computer: computerParam, app: { type: "string" }, name: { type: "string" }, bundle_id: { type: "string" }, pid: { type: "integer" }, scope: { enum: ["app", "foreground"] }, remember: { type: "boolean" } }, additionalProperties: false },
+  },
+  {
+    name: "consent_deny",
+    description: "Record a deny decision: app (name/bundle_id/pid/app string) or scope:'foreground'. remember:true persists it.",
+    inputSchema: { type: "object", properties: { computer: computerParam, app: { type: "string" }, name: { type: "string" }, bundle_id: { type: "string" }, pid: { type: "integer" }, scope: { enum: ["app", "foreground"] }, remember: { type: "boolean" } }, additionalProperties: false },
+  },
+  {
+    name: "consent_revoke",
+    description: "Remove recorded decisions for an app or scope:'foreground' (session and persisted).",
+    inputSchema: { type: "object", properties: { computer: computerParam, app: { type: "string" }, name: { type: "string" }, bundle_id: { type: "string" }, pid: { type: "integer" }, scope: { enum: ["app", "foreground"] } }, additionalProperties: false },
+  },
   // ---- observe & resolve ----
   {
     name: "request_access",
@@ -541,6 +578,7 @@ export const ELEMENT_ONLY_TARGET = new Set(["set_value", "select_text", "perform
 export const READ_ONLY_TOOLS = new Set([
   "computer_list", "stop_computer_control", "wait", "request_access", "recording_list", "recording_status",
   "find_elements", "get_value", "list_sessions", "browser_status", "trajectory_status", "trajectory_start", "trajectory_stop",
+  "consent_status",
 ]);
 
 /** Tools dispatchable to a remote agent over ssh (allow-list must match agent.mjs). */
@@ -558,7 +596,7 @@ export const REMOTE_TOOLS = new Set([
 
 /** Map public tool name -> backend method name. */
 export const BACKEND_METHOD = Object.fromEntries(
-  TOOLS.filter((t) => !["computer_list", "computer_switch", "computer_register", "computer_spawn", "computer_remove", "stop_computer_control", "wait", "wait_for", "find_elements", "run_actions", "trajectory_start", "trajectory_stop", "trajectory_status", "trajectory_replay"].includes(t.name))
+  TOOLS.filter((t) => !["computer_list", "computer_switch", "computer_register", "computer_spawn", "computer_remove", "consent_status", "consent_allow", "consent_deny", "consent_revoke", "stop_computer_control", "wait", "wait_for", "find_elements", "run_actions", "trajectory_start", "trajectory_stop", "trajectory_status", "trajectory_replay"].includes(t.name))
     .map((t) => [t.name, {
       request_access: "probe",
       recording_start: "recordingStart",
@@ -578,6 +616,7 @@ export const MERGED_EXPANSION = {
   clipboard: ["read_clipboard", "write_clipboard"],
   recording: ["recording_start", "recording_stop", "recording_status", "recording_list"],
   computer: ["computer_list", "computer_switch", "computer_register", "computer_spawn", "computer_remove"],
+  consent: ["consent_status", "consent_allow", "consent_deny", "consent_revoke"],
   key: ["key", "hold_key"],
   browser: ["browser_start", "browser_status", "browser_navigate", "browser_click", "browser_type", "browser_screenshot", "browser_stop"],
   trajectory: ["trajectory_start", "trajectory_stop", "trajectory_status", "trajectory_replay"],
@@ -633,6 +672,12 @@ const TOOL_ANNOTATIONS = {
   computer_register: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   computer_spawn: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   computer_remove: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
+  // Consent — the user's own decision record, not an action on apps.
+  consent: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  consent_status: READ_ONLY_ANNOTATION,
+  consent_allow: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  consent_deny: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  consent_revoke: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   open_application: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   // Input — changes what the user sees.
   left_click: INPUT_ANNOTATION, double_click: INPUT_ANNOTATION, triple_click: INPUT_ANNOTATION,
@@ -690,6 +735,7 @@ const HIDDEN_FROM_LIST = new Set([
   "read_clipboard", "write_clipboard",
   "recording_start", "recording_stop", "recording_status", "recording_list",
   "computer_list", "computer_switch", "computer_register", "computer_spawn", "computer_remove",
+  "consent_status", "consent_allow", "consent_deny", "consent_revoke",
   "hold_key",
   "browser_start", "browser_status", "browser_navigate", "browser_click", "browser_type", "browser_screenshot", "browser_stop",
   "trajectory_start", "trajectory_stop", "trajectory_status", "trajectory_replay",
@@ -760,6 +806,18 @@ export function resolveTool(name, args = {}) {
       const id = rest.id;
       delete rest.id;
       return { name: wire, args: { ...rest, computer: id } };
+    }
+    case "consent": {
+      const rest = { ...args };
+      delete rest.action;
+      const wire = { status: "consent_status", allow: "consent_allow", deny: "consent_deny", revoke: "consent_revoke" }[args.action];
+      if (!wire) throw bad(`consent action must be status, allow, deny or revoke (got ${JSON.stringify(args.action)})`);
+      if (args.action === "status") return { name: wire, args: { computer: rest.computer } };
+      const foreground = rest.scope === "foreground";
+      if (!foreground && rest.app == null && rest.name == null && rest.bundle_id == null && rest.pid == null) {
+        throw bad(`consent action "${args.action}" needs an app (name, bundle_id, pid or app string) — or scope:"foreground" for the shared-pointer decision`);
+      }
+      return { name: wire, args: rest };
     }
     case "key": {
       if (args.duration == null) return { name, args };

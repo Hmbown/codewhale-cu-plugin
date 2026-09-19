@@ -179,15 +179,35 @@ static BOOL cuWindowAtPointForPid(pid_t pid, CGPoint p, uint32_t *outWin, CGRect
  * menu closes the moment the lease ends. Chromium rebuilds its AX tree
  * lazily across the first transitions, so observes poll through the rebuild.
  */
-typedef struct { ProcessSerialNumber frontPSN, targetPSN; pid_t frontPid; pid_t targetPid; BOOL swapped; double t0, idleBefore, idleAfter, leaseMs; } cuBgLease;
+typedef struct { ProcessSerialNumber frontPSN, targetPSN; pid_t frontPid; pid_t targetPid; BOOL swapped; double t0, idleBefore, idleAfter, leaseMs, yieldMs; } cuBgLease;
 static BOOL axActivate(pid_t pid);
 static BOOL cuFrontmostIsPid(pid_t pid);
 static id attr(AXUIElementRef el, NSString *name);
 static void axPrepare(AXUIElementRef app);
-static BOOL cuBgLeaseBegin(NSRunningApplication *inputApp, uint32_t winNum, BOOL swap, cuBgLease *lease, NSString **why) {
+// User-activity yield: before a moment that touches shared input — a front
+// lease, a real-pointer gesture, foreground keys — wait for a gap in the
+// person's hardware input rather than cutting between their keystrokes.
+// kCGAnyInputEventType only counts hardware events (verified 2026-09-17:
+// our posted events never tick it), so it is exactly "is the human using
+// the machine right now". yield_gap_ms is the quiet window we wait for (0
+// disables); yield_wait_ms bounds the wait — a busy user cannot starve the
+// agent forever, we simply take our turn once the deadline passes. Returns
+// milliseconds yielded, 0 when the surface was already free.
+static double cuYieldToUser(NSDictionary *args) {
+  double gap=[args[@"yield_gap_ms"] doubleValue], wait=[args[@"yield_wait_ms"] doubleValue];
+  if(gap<=0 || wait<=0) return 0;
+  CFTimeInterval start=CFAbsoluteTimeGetCurrent();
+  while(CFAbsoluteTimeGetCurrent()-start < wait/1000.0) {
+    cuCheckCancelled();
+    if(CGEventSourceSecondsSinceLastEventType(kCGEventSourceStateHIDSystemState,kCGAnyInputEventType)*1000.0 >= gap) break;
+    usleep(40000);
+  }
+  return (CFAbsoluteTimeGetCurrent()-start)*1000.0;
+}
+static BOOL cuBgLeaseBegin(NSRunningApplication *inputApp, uint32_t winNum, BOOL swap, NSDictionary *args, cuBgLease *lease, NSString **why) {
   lease->targetPid = inputApp.processIdentifier;
   lease->swapped = NO;
-  lease->t0 = lease->idleBefore = lease->idleAfter = lease->leaseMs = 0;
+  lease->t0 = lease->idleBefore = lease->idleAfter = lease->leaseMs = lease->yieldMs = 0;
   if(cuGetPSN(lease->targetPid, &lease->targetPSN) != 0) {
     *why = @"could not resolve the process serial number for a window-routed action; no input was sent";
     return NO;
@@ -198,6 +218,11 @@ static BOOL cuBgLeaseBegin(NSRunningApplication *inputApp, uint32_t winNum, BOOL
     // the window, and setting an app front of itself changes nothing. Skipping
     // it keeps receipts truthful (front_lease:false) and avoids a restore
     // attempt for focus that was never borrowed.
+    // Yield to the person first: borrowing the front while they are
+    // mid-keystroke can redirect their input into our window. The wait is
+    // reported as yield_ms, not hidden, and runs before t0 so the borrow
+    // window measures only the time focus was actually held.
+    lease->yieldMs = cuYieldToUser(args);
     NSRunningApplication *frontApp = NSWorkspace.sharedWorkspace.frontmostApplication;
     lease->frontPid = frontApp.processIdentifier;
     if(cuGetFront(&lease->frontPSN) != 0 || cuSetFront(&lease->targetPSN, 0, 0x400) != 0) {
@@ -227,6 +252,7 @@ static void cuLeaseAccounting(NSMutableDictionary *receipt, cuBgLease *lease) {
   // across calls (menu path): a zero window would claim an instant lease.
   // Millisecond precision: these ride every lease receipt and its trajectory.
   if(!lease->swapped || lease->leaseMs <= 0) return;
+  if(lease->yieldMs > 0) receipt[@"yield_ms"] = @(round(lease->yieldMs));
   receipt[@"lease_ms"] = @(round(lease->leaseMs * 1000.0) / 1000.0);
   receipt[@"idle_before_s"] = @(round(lease->idleBefore * 1000.0) / 1000.0);
   receipt[@"idle_after_s"] = @(round(lease->idleAfter * 1000.0) / 1000.0);
@@ -390,7 +416,7 @@ static NSDictionary *cuBgPointer(NSRunningApplication *inputApp, NSDictionary *a
   // Measured on macOS 26.1: view-level mouse delivery requires the window to
   // be key, and only the front-process lease makes it key. The window-focus
   // record alone makes it main — events reach the process and are swallowed.
-  if(!cuBgLeaseBegin(inputApp, winNum, YES, &lease, &why))
+  if(!cuBgLeaseBegin(inputApp, winNum, YES, args, &lease, &why))
     @throw [NSException exceptionWithName:@"bg_dispatch_unavailable" reason:why userInfo:nil];
   BOOL menuLeaseHeld = NO;
   BOOL restored = YES;
@@ -879,8 +905,12 @@ static NSDictionary *cuType(NSDictionary *args, NSRunningApplication *inputApp, 
   BOOL typeRestored = YES;
   if(needsRecord && typeWin) {
     NSString *why = nil;
-    leasing = cuBgLeaseBegin(inputApp, typeWin, YES, &lease, &why);
+    leasing = cuBgLeaseBegin(inputApp, typeWin, YES, args, &lease, &why);
   }
+  // Foreground keystrokes share the user's keyboard: wait for a hardware-
+  // input gap once before the stream, not per grapheme — the stream itself
+  // is already paced like a fast typist.
+  double yieldMs=(!simulated && !semantic && [args[@"foreground_input"] boolValue]) ? cuYieldToUser(args) : 0;
   @try {
     for(NSUInteger i=0;!semantic && i<text.length && !cuCancelled;) {
       if([args[@"foreground_input"] boolValue]) cuRequireForeground(inputApp);
@@ -914,6 +944,7 @@ static NSDictionary *cuType(NSDictionary *args, NSRunningApplication *inputApp, 
                                   @"verified":@(verified),@"focused_role":role?:[NSNull null]} mutableCopy];
   if(leasing) receipt[@"window_focused"]=@YES;
   if(lease.swapped) receipt[@"front_restored"]=@(typeRestored);
+  if(yieldMs>0) receipt[@"yield_ms"]=@(round(yieldMs));
   cuLeaseAccounting(receipt,&lease);
   if(!verified) receipt[@"verification_required"]=@"screenshot";
   return receipt;
@@ -1062,7 +1093,14 @@ static id execute(NSDictionary *p) {
     NSRunningApplication *a=resolve(args[@"app_ref"]);
     if(!a) @throw [NSException exceptionWithName:@"app" reason:@"application not found" userInfo:nil];
     if([a.bundleIdentifier isEqual:@"net.codewhale.computer-use"] && [args[@"activate"] boolValue]) @throw [NSException exceptionWithName:@"protected" reason:@"Computer Use safety controls belong to the user." userInfo:nil];
-    if([args[@"activate"] boolValue]) cuLockInput();
+    double yieldMs=0;
+    if([args[@"activate"] boolValue]) {
+      cuLockInput();
+      // Activation takes the person's foreground — wait for a hardware-
+      // input gap first so a mid-type activation cannot swallow their
+      // next keystrokes.
+      yieldMs=cuYieldToUser(args);
+    }
     cuCheckCancelled();
     if([args[@"activate"] boolValue] && !axActivate(a.processIdentifier)) [a activateWithOptions:0];
     if([args[@"activate"] boolValue]) for(int i=0;i<120;i++) {
@@ -1073,7 +1111,9 @@ static id execute(NSDictionary *p) {
       [NSRunLoop.currentRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.025]];
       if(NSWorkspace.sharedWorkspace.frontmostApplication.processIdentifier==a.processIdentifier) break;
     }
-    return @{@"found":@YES,@"name":a.localizedName?:@"",@"pid":@(a.processIdentifier),@"bundle_id":a.bundleIdentifier?:@"",@"frontmost":@(a.active)};
+    NSMutableDictionary *info=[@{@"found":@YES,@"name":a.localizedName?:@"",@"pid":@(a.processIdentifier),@"bundle_id":a.bundleIdentifier?:@"",@"frontmost":@(a.active)} mutableCopy];
+    if(yieldMs>0) info[@"yield_ms"]=@(round(yieldMs));
+    return info;
   }
   if([tool isEqual:@"kill_app"]) {
     NSString *bundle=args[@"bundle_id"], *name=args[@"name"]; NSNumber *pidNum=args[@"pid"];
@@ -1229,9 +1269,17 @@ static id execute(NSDictionary *p) {
   if(!AXIsProcessTrusted()) @throw [NSException exceptionWithName:@"permission" reason:@"Accessibility permission is missing for Codewhale Computer Use (or the direct host)." userInfo:nil];
   if([tool isEqual:@"type"]) return cuType(args, inputApp, cuFocusedElement(inputApp.processIdentifier), NO);
   if([tool isEqual:@"key_event"]) {
-    if([args[@"foreground_input"] boolValue] && [args[@"down"] boolValue]) cuRequireForeground(inputApp);
+    double yieldMs=0;
+    if([args[@"foreground_input"] boolValue] && [args[@"down"] boolValue]) {
+      cuRequireForeground(inputApp);
+      // Real hardware taps land between the person's keystrokes unless we
+      // wait for a gap first; the up event is part of our own press and
+      // must not wait.
+      yieldMs=cuYieldToUser(args);
+    }
     cuCheckCancelled();
     id result=cuPostKey(args,inputApp.processIdentifier);
+    if(yieldMs>0) { NSMutableDictionary *r=[result mutableCopy]; r[@"yield_ms"]=@(round(yieldMs)); result=r; }
     if([args[@"input_lease"] boolValue] && [args[@"down"] boolValue]) { cuLeaseKey=args; cuLeasePid=inputApp.processIdentifier; cuLeaseApp=inputApp; }
     return result;
   }
@@ -1258,7 +1306,7 @@ static id execute(NSDictionary *p) {
     if(!keyWin) @throw [NSException exceptionWithName:@"focus" reason:@"no focused window for a window-routed key; focus a control first" userInfo:nil];
     cuBgLease lease;
     NSString *why = nil;
-    if(!cuBgLeaseBegin(inputApp, keyWin, YES, &lease, &why))
+    if(!cuBgLeaseBegin(inputApp, keyWin, YES, args, &lease, &why))
       @throw [NSException exceptionWithName:@"bg_dispatch_unavailable" reason:why userInfo:nil];
     BOOL keyRestored = YES;
     @try {
@@ -1406,6 +1454,11 @@ static id execute(NSDictionary *p) {
     // App-scoped clicks stay inside the bound window and do not steal the
     // foreground; they still move the real cursor and restore it.
     if([args[@"foreground_input"] boolValue]) cuRequireForeground(inputApp);
+    // A real-pointer stream interleaved with the person's typing is
+    // indistinguishable from a fight over the machine. Wait for a hardware-
+    // input gap before the gesture — app_scoped moves the cursor too, so
+    // the yield is unconditional, not just for foreground mode.
+    double yieldMs=cuYieldToUser(args);
     // AppKit only assembles a drag out of events that look like they came from
     // the input hardware; a NULL-source stream delivers down and up but drops
     // every mouseDragged in between.
@@ -1453,10 +1506,12 @@ static id execute(NSDictionary *p) {
     if(cuCancelled) @throw [NSException exceptionWithName:@"cancelled" reason:@"computer request cancelled" userInfo:nil];
     usleep(150000);   // let the window server settle before reading it back
     NSString *after=NSWorkspace.sharedWorkspace.frontmostApplication.localizedName?:@"";
-    return @{@"action_sent":@YES,@"pointer_moved":@YES,@"restored":@(restore),
+    NSMutableDictionary *gesture=[@{@"action_sent":@YES,@"pointer_moved":@YES,@"restored":@(restore),
              @"foreground_taken":@(takes),
              @"foreground_before":before,@"foreground_after":after,
-             @"home":@{@"x":@(home.x),@"y":@(home.y)}};
+             @"home":@{@"x":@(home.x),@"y":@(home.y)}} mutableCopy];
+    if(yieldMs>0) gesture[@"yield_ms"]=@(round(yieldMs));
+    return gesture;
   }
   if([tool isEqual:@"scroll"]) {
     cuCheckCancelled();
