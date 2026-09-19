@@ -882,18 +882,24 @@ async function callTool(params) {
     }
     // type/key with an element target run the documented focus-then-act idiom
     // in one call: the element is revalidated and accessibility-focused first,
-    // through the same routed path a separate focus call would take.
+    // through the same routed path a separate focus call would take. The
+    // target stays on the args — the backend also uses it to route the input
+    // into the element's own window, which is how hosted panels (native file
+    // pickers) receive keys whose handlers live outside the app's process.
     if ((name === "type" || name === "key") && args.target != null) {
       if (args.target.type !== "element") {
         throw new ServerError("bad_target", `${name} accepts element targets only — use left_click for a coordinate, then ${name}`);
       }
       const focused = await callTool({ name: "focus", arguments: { target: args.target, computer: computer.id } });
       const focusBody = JSON.parse(focused.content[0].text);
-      if (focused.isError || focusBody.ok === false) {
+      // For a chord the element's window is what matters — key equivalents
+      // dispatch at window level, so a focus refusal must not block delivery.
+      // Text is different: characters go to the first responder, so a field
+      // that could not be focused cannot receive the string either.
+      if (name === "type" && (focused.isError || focusBody.ok === false)) {
         return { content: [{ type: "text", text: JSON.stringify(fail(computer, focusBody.error?.code ?? "focus_failed", focusBody.error?.message ?? "element could not be focused", { tool: name, stage: "focus" })) }], isError: true };
       }
       args = { ...args };
-      delete args.target;
     }
     // Out-of-process runners (the desktop app for the local computer, the
     // remote agent for ssh computers) get the request over the wire.
@@ -1125,7 +1131,9 @@ async function prepareArgs(computer, name, args, resolve, sink) {
   const out = { ...args };
   delete out.computer;
   delete out.ephemeral; // server-internal: never reaches a backend
-  const semantic = new Set(["set_value", "select_text", "perform_action", "focus", "get_value"]);
+  // type/key join the semantic set: their element target addresses a window
+  // for input routing (hosted panels), not a point for pointer delivery.
+  const semantic = new Set(["set_value", "select_text", "perform_action", "focus", "get_value", "type", "key"]);
   for (const key of ["target", "from_target", "to"]) {
     const given = out[key];
     if (given == null) continue;

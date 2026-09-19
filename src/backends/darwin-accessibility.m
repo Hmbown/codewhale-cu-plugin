@@ -179,11 +179,51 @@ static BOOL cuWindowAtPointForPid(pid_t pid, CGPoint p, uint32_t *outWin, CGRect
  * menu closes the moment the lease ends. Chromium rebuilds its AX tree
  * lazily across the first transitions, so observes poll through the rebuild.
  */
-typedef struct { ProcessSerialNumber frontPSN, targetPSN; pid_t frontPid; pid_t targetPid; BOOL swapped; double t0, idleBefore, idleAfter, leaseMs, yieldMs; } cuBgLease;
+typedef struct { ProcessSerialNumber frontPSN, targetPSN, postPSN; pid_t frontPid; pid_t targetPid; pid_t postPid; uint32_t postWin; BOOL swapped; double t0, idleBefore, idleAfter, leaseMs, yieldMs; } cuBgLease;
 static BOOL axActivate(pid_t pid);
 static BOOL cuFrontmostIsPid(pid_t pid);
 static id attr(AXUIElementRef el, NSString *name);
 static void axPrepare(AXUIElementRef app);
+/**
+ * The frame and owner pid of a CGWindow by number — no pid filter, because
+ * the window an action is routed to may belong to a hosting service.
+ */
+static BOOL cuWindowInfoForNumber(uint32_t winNum, CGRect *outFrame, pid_t *outPid) {
+  NSArray *windows = CFBridgingRelease(CGWindowListCopyWindowInfo(kCGWindowListOptionAll, kCGNullWindowID));
+  for(NSDictionary *w in windows) {
+    if([w[(__bridge NSString *)kCGWindowNumber] unsignedIntValue] != winNum) continue;
+    if(outPid) *outPid = [w[(__bridge NSString *)kCGWindowOwnerPID] intValue];
+    if(outFrame) CGRectMakeWithDictionaryRepresentation((__bridge CFDictionaryRef)w[(__bridge NSString *)kCGWindowBounds], outFrame);
+    return YES;
+  }
+  return NO;
+}
+/**
+ * Service-hosted UI (openAndSavePanelService panels and similar XPC surfaces)
+ * presents as TWO co-located windows at the same frame: a proxy owned by the
+ * client app and the real window owned by the service. Records addressed to
+ * the client die in its event queue — the key-equivalent and text handlers
+ * run in the service's AppKit. A foreign window only takes over routing when
+ * its owner is an XPC service: two ordinary apps can share a frame (two
+ * maximized windows), and that must never redirect the user's input.
+ */
+static BOOL cuHostedWindowAtSameFrame(pid_t excludePid, CGRect f, uint32_t *outWin, pid_t *outPid) {
+  NSArray *windows = CFBridgingRelease(CGWindowListCopyWindowInfo(kCGWindowListOptionAll, kCGNullWindowID));
+  for(NSDictionary *w in windows) {
+    pid_t owner = [w[(__bridge NSString *)kCGWindowOwnerPID] intValue];
+    if(owner == excludePid || [w[(__bridge NSString *)kCGWindowLayer] intValue] != 0) continue;
+    CGRect b;
+    if(!CGRectMakeWithDictionaryRepresentation((__bridge CFDictionaryRef)w[(__bridge NSString *)kCGWindowBounds], &b)) continue;
+    if(fabs(b.origin.x - f.origin.x) > 2 || fabs(b.origin.y - f.origin.y) > 2) continue;
+    if(fabs(b.size.width - f.size.width) > 2 || fabs(b.size.height - f.size.height) > 2) continue;
+    NSRunningApplication *ra = [NSRunningApplication runningApplicationWithProcessIdentifier:owner];
+    if(![ra.bundleIdentifier containsString:@".xpc."]) continue;
+    *outWin = [w[(__bridge NSString *)kCGWindowNumber] unsignedIntValue];
+    if(outPid) *outPid = owner;
+    return YES;
+  }
+  return NO;
+}
 // User-activity yield: before a moment that touches shared input — a front
 // lease, a real-pointer gesture, foreground keys — wait for a gap in the
 // person's hardware input rather than cutting between their keystrokes.
@@ -237,13 +277,35 @@ static BOOL cuBgLeaseBegin(NSRunningApplication *inputApp, uint32_t winNum, BOOL
     lease->t0 = CFAbsoluteTimeGetCurrent();
     lease->idleBefore = CGEventSourceSecondsSinceLastEventType(kCGEventSourceStateHIDSystemState, kCGAnyInputEventType);
   }
+  // Records are addressed to the window's real owner, which is not always
+  // the bound app: a service-hosted panel (openAndSavePanelService) leaves
+  // a same-frame proxy in the client while its handlers run in the service.
+  // Events posted to the client's PSN die in its queue. The front lease
+  // stays on the client — that is what makes its panels key — while the
+  // focus record and event records go to the owning process.
+  lease->postPid = lease->targetPid;
+  lease->postPSN = lease->targetPSN;
+  lease->postWin = winNum;
+  {
+    CGRect wf = CGRectZero;
+    pid_t owner = 0;
+    if(cuWindowInfoForNumber(winNum, &wf, &owner)) {
+      pid_t real = 0; uint32_t realWin = 0;
+      if(owner != lease->targetPid) {
+        NSRunningApplication *ra = [NSRunningApplication runningApplicationWithProcessIdentifier:owner];
+        if([ra.bundleIdentifier containsString:@".xpc."]) { real = owner; realWin = winNum; }
+      } else cuHostedWindowAtSameFrame(lease->targetPid, wf, &realWin, &real);
+      if(real && cuGetPSN(real, &lease->postPSN) == 0) { lease->postPid = real; lease->postWin = realWin; }
+      else { lease->postPSN = lease->targetPSN; }
+    }
+  }
   uint8_t rec[0xf8];
   memset(rec, 0, sizeof(rec));
   rec[0x24] = 0xf8; rec[0x28] = 0x0d;
-  rec[0x5c] = (winNum >> 24) & 0xff; rec[0x5d] = (winNum >> 16) & 0xff;
-  rec[0x5e] = (winNum >> 8) & 0xff;  rec[0x5f] = winNum & 0xff;
+  rec[0x5c] = (lease->postWin >> 24) & 0xff; rec[0x5d] = (lease->postWin >> 16) & 0xff;
+  rec[0x5e] = (lease->postWin >> 8) & 0xff;  rec[0x5f] = lease->postWin & 0xff;
   rec[0xaa] = 0x01;
-  cuPostRecord(&lease->targetPSN, rec);
+  cuPostRecord(&lease->postPSN, rec);
   usleep(30000);
   return YES;
 }
@@ -363,16 +425,16 @@ static void cuFrontLeaseHold(cuBgLease *lease) {
   }
 }
 /** Field-set + record post shared by mouse, wheel and keyboard events. */
-static void cuPostEventRecord(cuBgLease *lease, CGEventRef e, uint32_t winNum, CGPoint winLoc) {
+static void cuPostEventRecord(cuBgLease *lease, CGEventRef e, CGPoint winLoc) {
   CGEventSetIntegerValueField(e, 0, 3);
   CGEventSetIntegerValueField(e, 7, 3);
-  CGEventSetIntegerValueField(e, 0x28, lease->targetPid);
-  CGEventSetIntegerValueField(e, 0x33, winNum);
-  CGEventSetIntegerValueField(e, 0x5b, winNum);
-  CGEventSetIntegerValueField(e, 0x5c, winNum);
+  CGEventSetIntegerValueField(e, 0x28, lease->postPid);
+  CGEventSetIntegerValueField(e, 0x33, lease->postWin);
+  CGEventSetIntegerValueField(e, 0x5b, lease->postWin);
+  CGEventSetIntegerValueField(e, 0x5c, lease->postWin);
   cuSetWinLoc(e, winLoc);
   void *record = *(void **)((char *)e + 0x18);
-  if(record) cuPostRecord(&lease->targetPSN, record); else CGEventPostToPid(lease->targetPid, e);
+  if(record) cuPostRecord(&lease->postPSN, record); else CGEventPostToPid(lease->postPid, e);
 }
 static id attr(AXUIElementRef el, NSString *name);
 static void axPrepare(AXUIElementRef app);
@@ -428,7 +490,7 @@ static NSDictionary *cuBgPointer(NSRunningApplication *inputApp, NSDictionary *a
         // Pixel units: Chromium ignores line-unit wheel events entirely
         // (measured). One notch ≈ one line ≈ 40 px.
         CGEventRef wheel = CGEventCreateScrollWheelEvent(NULL, kCGScrollEventUnitPixel, 2, [d[1] intValue] * 40, [d[0] intValue] * 40);
-        cuPostEventRecord(&lease, wheel, winNum, CGPointMake(anchor.x - frame.origin.x, anchor.y - frame.origin.y));
+        cuPostEventRecord(&lease, wheel, CGPointMake(anchor.x - frame.origin.x, anchor.y - frame.origin.y));
         CFRelease(wheel);
       } else {
         CGPoint p = CGPointMake([step[@"x"] doubleValue], [step[@"y"] doubleValue]);
@@ -438,7 +500,7 @@ static NSDictionary *cuBgPointer(NSRunningApplication *inputApp, NSDictionary *a
         BOOL pressed = type == kCGEventLeftMouseDown || type == kCGEventRightMouseDown || type == kCGEventOtherMouseDown
                     || type == kCGEventLeftMouseDragged || type == kCGEventRightMouseDragged || type == kCGEventOtherMouseDragged;
         CGEventSetDoubleValueField(e, 2, pressed ? 1.0 : 0.0);
-        cuPostEventRecord(&lease, e, winNum, CGPointMake(p.x - frame.origin.x, p.y - frame.origin.y));
+        cuPostEventRecord(&lease, e, CGPointMake(p.x - frame.origin.x, p.y - frame.origin.y));
         CFRelease(e);
       }
       usleep((useconds_t)([step[@"delayMs"] intValue] ?: 20) * 1000);
@@ -467,7 +529,8 @@ static NSDictionary *cuBgPointer(NSRunningApplication *inputApp, NSDictionary *a
     else restored = cuBgLeaseEnd(&lease);
   }
   NSMutableDictionary *receipt = [@{@"action_sent":@YES, @"strategy":@"window-record", @"pointer_moved":@NO,
-           @"front_lease":@(lease.swapped), @"window":@{@"id":@(winNum)}} mutableCopy];
+           @"front_lease":@(lease.swapped), @"window":@{@"id":@(lease.postWin)}} mutableCopy];
+  if(lease.postPid != lease.targetPid) receipt[@"window_owner_pid"] = @(lease.postPid);
   if(lease.swapped) receipt[@"front_restored"] = @(restored);
   cuLeaseAccounting(receipt, &lease);
   if(menuLeaseHeld) receipt[@"menu_lease_held"] = @YES;
@@ -608,6 +671,43 @@ static BOOL cuFrame(AXUIElementRef el, CGRect *out) {
   if(!p || !z) return NO;
   *out=CGRectMake([p[@"x"] doubleValue],[p[@"y"] doubleValue],[z[@"w"] doubleValue],[z[@"h"] doubleValue]);
   return YES;
+}
+/**
+ * The CGWindow that should receive input for an element. An AXSheet ancestor
+ * is preferred over the app AXWindow: a hosted panel (openAndSavePanelService)
+ * is bridged into the client's tree as a sheet but is its own real window,
+ * owned by the service. The window lookup prefers the client pid, then a
+ * co-located XPC-service window — the service's window is the one whose
+ * handlers actually consume events. outRole names the resolved ancestor.
+ */
+static BOOL cuElementWindow(id element, pid_t preferPid, uint32_t *outWin, pid_t *outOwner, NSString **outRole) {
+  id sheet = nil, win = nil;
+  id node = element;
+  for(int depth = 0; node && depth < 64; depth++) {
+    NSString *r = attr((__bridge AXUIElementRef)node, @"AXRole");
+    if([r isEqual:@"AXSheet"] && !sheet) sheet = node;
+    else if([r isEqual:@"AXWindow"]) { win = node; break; }
+    else if([r isEqual:@"AXApplication"]) break;
+    id parent = attr((__bridge AXUIElementRef)node, @"AXParent");
+    if(!parent || CFEqual((__bridge CFTypeRef)parent, (__bridge CFTypeRef)node)) break;
+    node = parent;
+  }
+  for(id cand in @[sheet ?: [NSNull null], win ?: [NSNull null]]) {
+    if(cand == [NSNull null]) continue;
+    CGRect f;
+    if(!cuFrame((__bridge AXUIElementRef)cand, &f)) continue;
+    uint32_t w = 0; pid_t o = 0;
+    if(cuWindowNumberForFrame(preferPid, f, &w)) {
+      o = preferPid;
+      uint32_t fw = 0; pid_t fo = 0;
+      if(cuHostedWindowAtSameFrame(preferPid, f, &fw, &fo)) { w = fw; o = fo; }
+    } else if(!cuHostedWindowAtSameFrame(preferPid, f, &w, &o)) continue;
+    *outWin = w;
+    if(outOwner) *outOwner = o;
+    if(outRole) *outRole = attr((__bridge AXUIElementRef)cand, @"AXRole");
+    return YES;
+  }
+  return NO;
 }
 static NSDictionary *capturableWindow(NSArray *windows, pid_t pid, NSString *name, CGRect preferred) {
   NSDictionary *matched=nil;
@@ -831,6 +931,26 @@ static id cuFocusedElement(pid_t pid) {
   return focused;
 }
 /**
+ * Resolve a {windowIndex, path} element target inside the app's AX tree.
+ * Returns nil when the window or any path step no longer exists — the same
+ * staleness contract as the element-action tools.
+ */
+static id cuResolvePathTarget(pid_t pid, NSDictionary *t) {
+  AXUIElementRef appEl = AXUIElementCreateApplication(pid);
+  AXUIElementSetMessagingTimeout(appEl, 2.0);
+  axPrepare(appEl);
+  NSArray *ws = attr(appEl, @"AXWindows") ?: @[];
+  NSInteger wi = [t[@"windowIndex"] integerValue];
+  id el = wi == -1 ? attr(appEl, @"AXMenuBar") : wi == -2 ? (__bridge id)appEl : (wi >= 0 && wi < ws.count ? ws[wi] : nil);
+  for(NSNumber *i in t[@"path"] ?: @[]) {
+    NSArray *kids = el ? attr((__bridge AXUIElementRef)el, @"AXChildren") : nil;
+    if(i.unsignedIntegerValue >= kids.count) { el = nil; break; }
+    el = kids[i.unsignedIntegerValue];
+  }
+  CFRelease(appEl);
+  return el;
+}
+/**
  * Type into whatever holds focus in the bound app, then prove it landed.
  * Dispatch succeeding is not delivery (a process with no text receiver drops
  * the events silently), so the receipt reports `verified` from the focused
@@ -858,7 +978,11 @@ static NSDictionary *cuType(NSDictionary *args, NSRunningApplication *inputApp, 
        && selected.location>=0 && selected.length>=0 && selected.location<=before.length && selected.length<=before.length-selected.location)
       expected=[before stringByReplacingCharactersInRange:NSMakeRange(selected.location,selected.length) withString:text];
   }
-  BOOL semantic=!simulated && focused && ![args[@"foreground_input"] boolValue] && cuSettable((__bridge AXUIElementRef)focused,@"AXSelectedText")
+  // delivery:"events" forces the real keystroke stream. Service-backed
+  // fields (a hosted panel's path box) accept an AXSelectedText write and
+  // then overwrite it from their own model — the write verifies at read
+  // time and reverts on commit. Real key events reach the field's editor.
+  BOOL semantic=!simulated && focused && ![args[@"foreground_input"] boolValue] && ![args[@"delivery"] isEqual:@"events"] && cuSettable((__bridge AXUIElementRef)focused,@"AXSelectedText")
     && !axHasWebAncestor((__bridge AXUIElementRef)focused);
   if(semantic) {
     cuCheckCancelled();
@@ -879,31 +1003,29 @@ static NSDictionary *cuType(NSDictionary *args, NSRunningApplication *inputApp, 
   // channel under one lease; a refused lease falls back to process posting.
   uint32_t typeWin = 0;
   CGRect typeFrame = CGRectZero;
+  pid_t typeOwner = 0;
   BOOL needsRecord = NO;
-  if(!simulated && !semantic && focused && ![args[@"foreground_input"] boolValue] && cuResolveBgPointer()) {
-    for(NSUInteger i = 0; i < text.length && !needsRecord;) {
+  if(!simulated && !semantic && focused && ![args[@"foreground_input"] boolValue]) {
+    for(NSUInteger i = 0; i < text.length && !needsRecord && cuResolveBgPointer();) {
       NSRange r = [text rangeOfComposedCharacterSequencesForRange:NSMakeRange(i, 1)];
       if(r.length > 1) needsRecord = YES;
       i = NSMaxRange(r);
     }
-  }
-  if(needsRecord) {
-    id node = focused;
-    for(int depth = 0; node && depth < 64; depth++) {
-      if([attr((__bridge AXUIElementRef)node, @"AXRole") isEqual:@"AXWindow"]) {
-        cuFrame((__bridge AXUIElementRef)node, &typeFrame)
-          && cuWindowNumberForFrame(inputApp.processIdentifier, typeFrame, &typeWin);
-        break;
-      }
-      id parent = attr((__bridge AXUIElementRef)node, @"AXParent");
-      if(!parent || CFEqual((__bridge CFTypeRef)parent, (__bridge CFTypeRef)node)) break;
-      node = parent;
+    // The focused element may live in a hosted panel whose window belongs to
+    // a service, not the app — resolve its real window and owner either way,
+    // so process-posted text also reaches the right queue.
+    if(cuElementWindow(focused, inputApp.processIdentifier, &typeWin, &typeOwner, nil)
+       && cuWindowInfoForNumber(typeWin, &typeFrame, nil)) {
+      // A service-owned window's queue is where the panel's field lives;
+      // process posting to the app would drop the text. The record route
+      // under a lease delivers it and supplies key status.
+      if(typeOwner && typeOwner != inputApp.processIdentifier) needsRecord = YES;
     }
   }
   cuBgLease lease;
   BOOL leasing = NO;
   BOOL typeRestored = YES;
-  if(needsRecord && typeWin) {
+  if(needsRecord && typeWin && cuResolveBgPointer()) {
     NSString *why = nil;
     leasing = cuBgLeaseBegin(inputApp, typeWin, YES, args, &lease, &why);
   }
@@ -920,8 +1042,8 @@ static NSDictionary *cuType(NSDictionary *args, NSRunningApplication *inputApp, 
       if(!simulated) for(int down=1;down>=0;down--) {
         CGEventRef event=textEvent(chunk,down);
         if([args[@"foreground_input"] boolValue]) CGEventPost(kCGHIDEventTap,event);
-        else if(leasing) cuPostEventRecord(&lease, event, typeWin, CGPointMake(CGRectGetMidX(typeFrame) - typeFrame.origin.x, CGRectGetMidY(typeFrame) - typeFrame.origin.y));
-        else CGEventPostToPid(inputApp.processIdentifier,event);
+        else if(leasing) cuPostEventRecord(&lease, event, CGPointMake(CGRectGetMidX(typeFrame) - typeFrame.origin.x, CGRectGetMidY(typeFrame) - typeFrame.origin.y));
+        else CGEventPostToPid(typeOwner ? typeOwner : inputApp.processIdentifier,event);
         CFRelease(event);
       }
       i=NSMaxRange(range); usleep(10000);
@@ -1267,7 +1389,18 @@ static id execute(NSDictionary *p) {
     cuFrontLeaseRestoreIfHeld();
   if(mutates) { cuCheckCancelled(); cuLockInput(); }
   if(!AXIsProcessTrusted()) @throw [NSException exceptionWithName:@"permission" reason:@"Accessibility permission is missing for Codewhale Computer Use (or the direct host)." userInfo:nil];
-  if([tool isEqual:@"type"]) return cuType(args, inputApp, cuFocusedElement(inputApp.processIdentifier), NO);
+  if([tool isEqual:@"type"]) {
+    id focused = cuFocusedElement(inputApp.processIdentifier);
+    NSDictionary *tt = args[@"target"];
+    // An explicit element target overrides app-level focus for delivery
+    // routing — a hosted panel's field is never the app's AXFocusedUIElement.
+    if([tt isKindOfClass:NSDictionary.class]) {
+      id el = cuResolvePathTarget(inputApp.processIdentifier, tt);
+      if(!el) @throw [NSException exceptionWithName:@"stale" reason:@"element is no longer available; observe again" userInfo:nil];
+      focused = el;
+    }
+    return cuType(args, inputApp, focused, NO);
+  }
   if([tool isEqual:@"key_event"]) {
     double yieldMs=0;
     if([args[@"foreground_input"] boolValue] && [args[@"down"] boolValue]) {
@@ -1289,20 +1422,22 @@ static id execute(NSDictionary *p) {
   if([tool isEqual:@"bg_key"]) {
     if(!cuResolveBgPointer())
       @throw [NSException exceptionWithName:@"bg_dispatch_unavailable" reason:@"window-routed background keys are unavailable; no input was sent" userInfo:nil];
+    // The window to post into: an explicit element target's window when the
+    // caller names one (a panel's field, say), otherwise the focused
+    // element's. An app-level AXFocusedUIElement always reports the app's own
+    // window focus, which misses hosted panels entirely.
+    id anchor = nil;
+    NSDictionary *t = args[@"target"];
+    if([t isKindOfClass:NSDictionary.class]) {
+      anchor = cuResolvePathTarget(inputApp.processIdentifier, t);
+      if(!anchor) @throw [NSException exceptionWithName:@"stale" reason:@"element is no longer available; observe again" userInfo:nil];
+    } else anchor = cuFocusedElement(inputApp.processIdentifier);
     uint32_t keyWin = 0;
     CGRect keyFrame = CGRectZero;
-    id focused = cuFocusedElement(inputApp.processIdentifier);
-    id node = focused;
-    for(int depth = 0; node && depth < 64; depth++) {
-      if([attr((__bridge AXUIElementRef)node, @"AXRole") isEqual:@"AXWindow"]) {
-        cuFrame((__bridge AXUIElementRef)node, &keyFrame)
-          && cuWindowNumberForFrame(inputApp.processIdentifier, keyFrame, &keyWin);
-        break;
-      }
-      id parent = attr((__bridge AXUIElementRef)node, @"AXParent");
-      if(!parent || CFEqual((__bridge CFTypeRef)parent, (__bridge CFTypeRef)node)) break;
-      node = parent;
-    }
+    pid_t keyOwner = 0;
+    NSString *winRole = nil;
+    if(anchor) cuElementWindow(anchor, inputApp.processIdentifier, &keyWin, &keyOwner, &winRole)
+      && cuWindowInfoForNumber(keyWin, &keyFrame, nil);
     if(!keyWin) @throw [NSException exceptionWithName:@"focus" reason:@"no focused window for a window-routed key; focus a control first" userInfo:nil];
     cuBgLease lease;
     NSString *why = nil;
@@ -1313,12 +1448,14 @@ static id execute(NSDictionary *p) {
       for(int down = 1; down >= 0; down--) {
         CGEventRef event = CGEventCreateKeyboardEvent(NULL, [args[@"code"] unsignedShortValue], down ? true : false);
         CGEventSetFlags(event, [args[@"flags"] unsignedLongLongValue]);
-        cuPostEventRecord(&lease, event, keyWin, CGPointMake(CGRectGetMidX(keyFrame) - keyFrame.origin.x, CGRectGetMidY(keyFrame) - keyFrame.origin.y));
+        cuPostEventRecord(&lease, event, CGPointMake(CGRectGetMidX(keyFrame) - keyFrame.origin.x, CGRectGetMidY(keyFrame) - keyFrame.origin.y));
         CFRelease(event);
         usleep(30000);
       }
     } @finally { keyRestored = cuBgLeaseEnd(&lease); }
     NSMutableDictionary *receipt = [@{@"action_sent":@YES, @"strategy":@"window-record", @"keyboard_delivery":@"window-record", @"front_lease":@(lease.swapped)} mutableCopy];
+    if(winRole) receipt[@"window_role"] = winRole;
+    if(lease.postPid != lease.targetPid) receipt[@"window_owner_pid"] = @(lease.postPid);
     if(lease.swapped) receipt[@"front_restored"] = @(keyRestored);
     cuLeaseAccounting(receipt, &lease);
     return receipt;

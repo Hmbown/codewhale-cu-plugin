@@ -1108,7 +1108,7 @@ export function create({ exec }) {
       return { action_sent: true, strategy: "event", direction, amount, ...pointerCost(r) };
     },
     type: (args = {}) => native("type", args),
-    key: async ({ text, repeat = 1 } = {}) => {
+    key: async ({ text, repeat = 1, target } = {}) => {
       const { flags, code, key } = parseChord(text);
       const n = Math.max(1, Math.min(100, repeat));
       // A chorded press is usually aimed at the menu system (cmd+w,
@@ -1116,23 +1116,28 @@ export function create({ exec }) {
       // window. A process-bound event without one is discarded silently —
       // the receipt would still say action_sent. In background mode the
       // window-record route supplies a momentary key window, so flagged
-      // chords go through it when the helper supports it.
-      if (flags !== 0 && !state.foregroundInput && (await native("input_capabilities"))?.window_record === 1) {
+      // chords go through it when the helper supports it. An element target
+      // names the window to post into — hosted panels (native file pickers)
+      // consume their equivalents in the service that owns the window, never
+      // in the bound app.
+      if ((flags !== 0 || target != null) && !state.foregroundInput && (await native("input_capabilities"))?.window_record === 1) {
         try {
           let last;
           for (let i = 0; i < n; i++) {
-            last = await native("bg_key", { code, flags });
+            last = await native("bg_key", { code, flags, ...(target ? { target } : {}) });
             if (i < n - 1) await wait(30);
           }
           return { action_sent: true, key, code, keyboard_delivery: "window-record", input_scope: "application-window",
                    front_lease: last?.front_lease === true, repeat: n, ...leaseAccounting(last),
+                   ...(last?.window_owner_pid != null ? { window_owner_pid: last.window_owner_pid } : {}),
+                   ...(last?.window_role ? { window_role: last.window_role } : {}),
                    ...(typeof last?.front_restored === "boolean" ? { front_restored: last.front_restored } : {}),
                    ...(last?.front_restored === false ? { note: "the momentary window-record lease did not hand the user's foreground back; their next keystrokes may land in this app. Tell the user." } : {}) };
         } catch (error) {
           // No focused window or a refused lease: the key cannot reach the
           // menu system this way either. Fall through to process delivery
           // and say plainly in the receipt what was actually sent.
-          if (!/no focused window|window-routed background keys|bg_dispatch/.test(error.message)) throw error;
+          if (!/no focused window|window-routed background keys|bg_dispatch|no longer available/.test(error.message)) throw error;
         }
       }
       let yieldMs = 0;
