@@ -257,3 +257,18 @@ receipts belong in a public issue.
 | `npm run build:app` + `verify-bundle` | unavailable (codesign requires macOS) |
 | macOS permission flows | unavailable (no macOS host) |
 | Repository visibility / publish | not performed — human-only |
+
+## Windows qualification follow-up (0.11.2 source candidate)
+
+- Canonical CI includes Windows, including managed native input contracts and an
+  opt-in real WinForms observe/value/invoke/capture test on the disposable runner.
+- Semantic actions carry window and element runtime identities from observation;
+  first-child paths are traversed rather than skipped. Changed identities refuse
+  input. UIA ValuePattern reads are masked for password fields.
+- Capture preserves virtual-screen origins, honors display/region selection,
+  and rejects process failure or cancellation even if an old output file exists.
+- Browser discovery covers Chrome, Edge, Chromium and Brave vendor folders.
+- This is source qualification work. Earlier notarized macOS artifacts still
+  represent their recorded source revision; rebuild before publishing revised
+  source. No Windows signing, installed Engine, mixed-DPI, raw-input coexistence
+  or fresh-machine acceptance is implied by CI.

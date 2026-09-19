@@ -12,7 +12,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
     env:
@@ -30,7 +30,13 @@ jobs:
         if: runner.os == 'Linux'
         timeout-minutes: 10
         run: docker build -t codewhale-cu-linux -f docker/Dockerfile .
-      - run: npm test
+      - name: Windows controlled desktop acceptance
+        if: runner.os == 'Windows'
+        env:
+          CU_WINDOWS_DESKTOP_TESTS: '1'
+        run: node --test tests/win32-desktop.test.mjs
+      - run: node --test --test-timeout=90000 tests/*.test.mjs
+        timeout-minutes: 8
       - run: node scripts/check-receipts.mjs docs parity/results
 
 # Signed release qualification is a separate macOS operation using an
