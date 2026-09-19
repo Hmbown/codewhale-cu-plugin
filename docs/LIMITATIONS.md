@@ -23,9 +23,12 @@ gap in the user's hardware input. What neither is:
   cannot starve the agent — after the deadline it takes its turn anyway.
   Input arriving mid-action is still reported (`user_input_during_lease`),
   not prevented.
-- **Foreground consent is darwin-only.** Windows and Linux have no
-  background/foreground split — raw input there is foreground by nature,
-  so `activate:true` carries no second gate on those backends.
+- **Foreground consent applies on every local platform** — `activate:true`
+  always asks. But only macOS has a real background/foreground split:
+  `activate:false` on Windows launches minimized and on Linux re-restores
+  focus after launch; raw input on both is still shared-surface by nature,
+  so background there means "don't steal focus on launch", not
+  "background-safe input".
 - **Consent persists per computer id.** `remember:true` writes
   `consent.json` under the state dir keyed by computer id — a re-registered
   computer with a new id asks again; a stolen id inherits its ledger.

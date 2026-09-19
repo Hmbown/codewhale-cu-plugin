@@ -1,5 +1,16 @@
 # Release notes
 
+## 0.11.1 — background is the default on every platform
+
+- `activate:true` now requires the separate foreground consent on **every**
+  local platform, not just macOS — the shared-surface escalation always asks.
+- Windows `open_application` honors `activate:false` by launching the app
+  minimized instead of stealing the user's foreground.
+- Linux `open_application` honors `activate:false` by restoring the
+  previously focused window after launch (X11/xdotool, best-effort). Raw
+  input on Windows and Linux remains shared-surface by nature — background
+  there means the launch doesn't steal focus.
+
 ## 0.11.0 — consent and turn-taking: working *with* the person on their Mac
 
 The other half of "don't take over my computer": when the model works on the

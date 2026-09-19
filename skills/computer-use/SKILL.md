@@ -72,10 +72,11 @@ until the user has decided. Ask them, then record the answer:
   Only the user can change it; never work around it.
 
 Foreground is a second, separate consent. `open_application
-{activate:true}` on macOS — the shared-desktop escalation — additionally
-needs `consent {action:"allow", scope:"foreground"}`; a refusal reads
-`foreground_consent_required`, a recorded denial `foreground_denied`.
-Background control (`activate:false`) needs only the app consent.
+{activate:true}` — the shared-desktop escalation, on any platform —
+additionally needs `consent {action:"allow", scope:"foreground"}`; a
+refusal reads `foreground_consent_required`, a recorded denial
+`foreground_denied`. Background control (`activate:false`, the default
+everywhere) needs only the app consent.
 
 Spawned computers are exempt — a task-owned desktop holds nothing of the
 user's. Remote computers are covered by their transport's trust, not this
@@ -287,8 +288,10 @@ Once the GUI is the right interface: observe once, act once, then verify.
   desktop; watching it does not authorize shared-desktop control. Process-directed actions still
   change the target app: do not work in an app the user is actively editing.
   Close only disposable documents created by your task; never quit a user app.
-- Windows/Linux: raw input is foreground by nature; UIA/AT-SPI element actions
-  are the precise path.
+- Windows/Linux: `open_application` still defaults to `activate:false` —
+  Windows launches the app minimized and Linux hands focus back to the
+  previous window — but raw input there is foreground by nature;
+  UIA/AT-SPI element actions are the precise path.
 - HarmonyOS: `uitest` synthesizes touches; there is no hover or cursor.
 
 ## Keyboard

@@ -281,6 +281,12 @@ reports `strategy: "event"`, `pointer_moved` and `foreground_taken`. A point
 covered by another application's window is still refused. Return to
 `activate: false` when the shared-desktop step ends.
 
+`activate: false` is the default on every platform, not just macOS: Windows
+launches the app minimized and Linux hands focus back to the previous window
+after launch. Raw input on Windows and Linux is still shared-surface by
+nature — background there means the launch does not steal focus, not that
+input becomes background-safe.
+
 The binding receipt exposes `input_scope`, `shared_pointer` and
 `isolated_desktop: false`. The preview title distinguishes background app
 control from shared-desktop control. It is a view of the app, not a sandbox.

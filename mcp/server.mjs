@@ -587,8 +587,9 @@ async function consentCheck(computer, name, args) {
     grant = { ref: known, persisted: verdict.persisted === true };
   }
   // Taking the shared pointer/focus is a second, separate consent: the first
-  // activate:true on darwin is the moment the agent stops being background.
-  if (name === "open_application" && args.activate === true && (computer.platform ?? computer.platformHint) === "darwin") {
+  // activate:true is the moment the agent stops being background — on every
+  // platform, not just macOS.
+  if (name === "open_application" && args.activate === true) {
     const fg = consent.foregroundDecision(computer.id);
     if (fg.state === "denied") {
       throw new ServerError("foreground_denied",
@@ -597,7 +598,7 @@ async function consentCheck(computer, name, args) {
     }
     if (fg.state === "undecided") {
       throw new ServerError("foreground_consent_required",
-        `open_application activate:true would take this Mac's shared pointer and focus — ask the user, then record their answer with consent {action:"allow"|"deny", scope:"foreground"}. Background control (activate:false) needs no such consent.`,
+        `open_application activate:true would take this computer's shared pointer and focus — ask the user, then record their answer with consent {action:"allow"|"deny", scope:"foreground"}. Background control (activate:false) needs no such consent.`,
         { scope: "foreground" });
     }
   }

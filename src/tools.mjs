@@ -347,7 +347,7 @@ export const TOOLS = [
       properties: {
         name: { type: "string" }, bundle_id: { type: "string" }, url: { type: "string" },
         pid: { type: "integer", description: "Bind to this exact process. Use when two processes share a bundle id (list_apps shows both); it takes precedence over name and bundle_id and never launches anything." },
-        activate: { type: "boolean", description: "Bring to foreground; defaults to false. On macOS false keeps process-bound keyboard/accessibility control and refuses shared pointer gestures. True selects shared-desktop control with guarded foreground keys and real pointer gestures; use only when the user has authorized exclusive desktop use. Neither mode is an isolated computer." },
+        activate: { type: "boolean", description: "Bring to foreground; defaults to false — background is the default on every platform. On macOS false keeps process-bound keyboard/accessibility control and refuses shared pointer gestures; on Windows it launches the app minimized; on Linux it restores the previously focused window after launch. True selects shared-desktop control and requires the separate foreground consent; use only when the user has authorized exclusive desktop use. Neither mode is an isolated computer." },
         computer: computerParam,
       },
       additionalProperties: false,

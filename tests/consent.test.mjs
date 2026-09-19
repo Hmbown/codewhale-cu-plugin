@@ -218,6 +218,17 @@ test("allow opens; activate:true is a separate foreground consent", DARWIN, asyn
   await s.tool("kill_app", { name: "Calculator" });
 });
 
+test("foreground consent gates activate:true on every local platform, not just macOS", async (t) => {
+  const s = await boot(t, { CODEWHALE_CU_TEST_BACKEND: path.join(ROOT, "tests", "fixtures", "fake-backend.mjs") });
+  await s.tool("consent", { action: "allow", app: "FakeApp" });
+  const fg = await s.tool("open_application", { name: "FakeApp", activate: true });
+  assert.equal(fg.error?.code, "foreground_consent_required", "the shared-surface escalation asks on every platform");
+  await s.tool("consent", { action: "allow", scope: "foreground" });
+  const opened = await s.tool("open_application", { name: "FakeApp", activate: true });
+  assert.equal(opened.ok, true, JSON.stringify(opened));
+  assert.equal(opened.shared_pointer, true);
+});
+
 test("remember:true persists; consent status shows the ledger", DARWIN, async (t) => {
   const s = await boot(t);
   const r = await s.tool("consent", { action: "allow", app: "Finder", remember: true });
