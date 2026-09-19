@@ -1,5 +1,16 @@
 # Release notes
 
+## 0.11.2 — shared-desktop reliability (unreleased candidate)
+
+- App bundles include the Docker build context and lockfile required by
+  `computer spawn` on first use.
+- Typing without a focus lease no longer reads uninitialized accounting
+  data, fixing invalid JSON receipts and the macOS CI failure.
+- A busy desktop now refuses `user_busy` when the quiet-input deadline
+  expires, before taking focus or sending input. Foreground key presses
+  revalidate their app after waiting. Input arriving mid-action remains
+  a documented limitation.
+
 ## 0.11.1 — background is the default on every platform
 
 - `activate:true` now requires the separate foreground consent on **every**

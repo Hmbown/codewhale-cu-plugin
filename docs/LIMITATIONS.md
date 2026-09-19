@@ -19,8 +19,9 @@ gap in the user's hardware input. What neither is:
   it.
 - **Yield is turn-taking, not a lock.** The wait for a hardware-input gap
   is bounded (`CODEWHALE_CU_YIELD_WAIT_MS`, default 2500; the gap is
-  `CODEWHALE_CU_YIELD_GAP_MS`, default 450, and 0 disables). A busy user
-  cannot starve the agent — after the deadline it takes its turn anyway.
+  `CODEWHALE_CU_YIELD_GAP_MS`, default 450, and 0 disables). If the person remains active at the deadline, the call refuses
+  `user_busy` before sending input. Foreground key presses recheck the
+  bound app after waiting, so a switch during the wait cannot redirect them.
   Input arriving mid-action is still reported (`user_input_during_lease`),
   not prevented.
 - **Foreground consent applies on every local platform** — `activate:true`

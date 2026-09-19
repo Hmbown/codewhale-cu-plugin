@@ -320,9 +320,9 @@ Whenever a shared surface is taken — a front lease for window-record input,
 a real-pointer gesture, foreground keys, or an activation — the helper waits
 for a gap in the user's hardware input first (bounded, ~450 ms gap within a
 2.5 s window by default; `CODEWHALE_CU_YIELD_GAP_MS` /
-`CODEWHALE_CU_YIELD_WAIT_MS`). Receipts report the wait as `yield_ms` — the
-agent takes turns with the person rather than cutting between their
-keystrokes. Turn-taking, not a lock: `user_input_during_lease` still reports
+`CODEWHALE_CU_YIELD_WAIT_MS`). If no quiet window arrives, the call refuses
+`user_busy` before sending input. Successful receipts report the wait as
+`yield_ms`. Turn-taking, not a lock: `user_input_during_lease` still reports
 input that arrived mid-action.
 
 ### Browser control (CDP)

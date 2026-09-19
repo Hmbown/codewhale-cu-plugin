@@ -123,6 +123,7 @@ const MOUSE_MOVED = 5;
  */
 export function nativeErrorCode(message) {
   const m = String(message ?? "");
+  if (/^user_busy:/.test(m)) return "user_busy";
   if (/ambiguous/i.test(m)) return "window_ambiguous";
   if (/not capturable/i.test(m)) return "window_not_capturable";
   if (/several running applications match/i.test(m)) return "ambiguous_application";
@@ -200,8 +201,8 @@ export function create({ exec }) {
   // foreground keys and activations wait for a gap in the user's hardware
   // input rather than interleave with their typing. The helper reads the
   // same HID idle clock it uses for interference accounting. gap<=0 turns
-  // the wait off entirely; wait_ms bounds it so an active user cannot
-  // starve the agent. Every wait is reported as yield_ms in the receipt.
+  // the wait off entirely; wait_ms bounds it and refuses user_busy if the
+  // person is still active. Successful waits report yield_ms in the receipt.
   const yieldArgs = {
     yield_gap_ms: Number(process.env.CODEWHALE_CU_YIELD_GAP_MS ?? 450),
     yield_wait_ms: Number(process.env.CODEWHALE_CU_YIELD_WAIT_MS ?? 2500),
@@ -304,7 +305,12 @@ export function create({ exec }) {
     if (!exec.runInputLease) throw new ExecError("This executor cannot safely own held input; update Computer Use");
     if ((await native("input_capabilities"))?.input_lease !== 1) throw new ExecError("The native helper needs an update for disconnect-safe held input");
     const helper = await nativeHelper();
-    return exec.runInputLease(helper, [JSON.stringify({ tool, args: { ...args, ...yieldArgs, input_app_ref: state.inputApp, foreground_input: state.foregroundInput, owner_pipe: true, input_lease: true } })]);
+    try {
+      return await exec.runInputLease(helper, [JSON.stringify({ tool, args: { ...args, ...yieldArgs, input_app_ref: state.inputApp, foreground_input: state.foregroundInput, owner_pipe: true, input_lease: true } })]);
+    } catch (error) {
+      error.code = nativeErrorCode(error.message) ?? error.code;
+      throw error;
+    }
   }
 
   async function updatePreview(show = false) {

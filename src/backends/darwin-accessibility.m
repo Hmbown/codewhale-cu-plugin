@@ -21,6 +21,7 @@ static CGPoint cuLeasePoint;
 static NSString *cuTestLockDir = nil;
 static NSString *cuTestReleaseFile = nil;
 static CGEventFlags cuTestInheritedTextFlags = 0;
+static NSNumber *cuTestIdleSeconds = nil;
 #endif
 static void cuCancel(int signum) { cuCancelled = 1; }
 static void cuCheckCancelled(void) {
@@ -43,9 +44,10 @@ static void cuLockInput(void) {
     @throw [NSException exceptionWithName:@"input_busy" reason:@"another Computer Use session owns held input; release its key or pointer before sending input" userInfo:nil];
   }
 }
+static BOOL cuFrontmostIsPid(pid_t pid);
 static void cuRequireForeground(NSRunningApplication *expected) {
   NSRunningApplication *actual=NSWorkspace.sharedWorkspace.frontmostApplication;
-  if(actual.processIdentifier!=expected.processIdentifier)
+  if(!cuFrontmostIsPid(expected.processIdentifier))
     @throw [NSException exceptionWithName:@"focus" reason:[NSString stringWithFormat:@"foreground changed to %@ (pid %d); expected %@ (pid %d). No key-down or text was sent to the new foreground application.",actual.localizedName?:@"unknown application",actual.processIdentifier,expected.localizedName?:@"bound application",expected.processIdentifier] userInfo:nil];
 }
 static id cuPostKey(NSDictionary *args, pid_t destination) {
@@ -230,19 +232,25 @@ static BOOL cuHostedWindowAtSameFrame(pid_t excludePid, CGRect f, uint32_t *outW
 // kCGAnyInputEventType only counts hardware events (verified 2026-09-17:
 // our posted events never tick it), so it is exactly "is the human using
 // the machine right now". yield_gap_ms is the quiet window we wait for (0
-// disables); yield_wait_ms bounds the wait — a busy user cannot starve the
-// agent forever, we simply take our turn once the deadline passes. Returns
-// milliseconds yielded, 0 when the surface was already free.
+// disables); yield_wait_ms bounds the wait. A busy desktop refuses before
+// input is sent; a deadline is not permission to interrupt the person.
+// Returns milliseconds yielded, 0 when the surface was already free.
 static double cuYieldToUser(NSDictionary *args) {
   double gap=[args[@"yield_gap_ms"] doubleValue], wait=[args[@"yield_wait_ms"] doubleValue];
   if(gap<=0 || wait<=0) return 0;
-  CFTimeInterval start=CFAbsoluteTimeGetCurrent();
-  while(CFAbsoluteTimeGetCurrent()-start < wait/1000.0) {
+  NSTimeInterval start=NSProcessInfo.processInfo.systemUptime;
+  while(YES) {
     cuCheckCancelled();
-    if(CGEventSourceSecondsSinceLastEventType(kCGEventSourceStateHIDSystemState,kCGAnyInputEventType)*1000.0 >= gap) break;
-    usleep(40000);
+    double idle=CGEventSourceSecondsSinceLastEventType(kCGEventSourceStateHIDSystemState,kCGAnyInputEventType);
+#ifdef CU_TEST
+    if(cuTestIdleSeconds) idle=cuTestIdleSeconds.doubleValue;
+#endif
+    double elapsed=(NSProcessInfo.processInfo.systemUptime-start)*1000.0;
+    if(isfinite(idle) && idle>=0 && idle*1000.0>=gap) return elapsed;
+    if(elapsed>=wait)
+      @throw [NSException exceptionWithName:@"user_busy" reason:@"user_busy: no quiet input window became available; no input was sent. Wait for the user to finish before trying again." userInfo:nil];
+    usleep((useconds_t)(fmin(40.0,wait-elapsed)*1000.0));
   }
-  return (CFAbsoluteTimeGetCurrent()-start)*1000.0;
 }
 static BOOL cuBgLeaseBegin(NSRunningApplication *inputApp, uint32_t winNum, BOOL swap, NSDictionary *args, cuBgLease *lease, NSString **why) {
   lease->targetPid = inputApp.processIdentifier;
@@ -339,7 +347,7 @@ static BOOL cuBgLeaseEnd(cuBgLease *lease) {
 }
 static BOOL cuFrontmostIsPid(pid_t pid) {
   ProcessSerialNumber front, want;
-  if(cuGetFront(&front) == 0 && cuGetPSN(pid, &want) == 0)
+  if(cuResolveBgPointer() && cuGetFront(&front) == 0 && cuGetPSN(pid, &want) == 0)
     return front.highLongOfPSN == want.highLongOfPSN && front.lowLongOfPSN == want.lowLongOfPSN;
   [NSRunLoop.currentRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.02]];
   return NSWorkspace.sharedWorkspace.frontmostApplication.processIdentifier == pid;
@@ -1022,7 +1030,7 @@ static NSDictionary *cuType(NSDictionary *args, NSRunningApplication *inputApp, 
       if(typeOwner && typeOwner != inputApp.processIdentifier) needsRecord = YES;
     }
   }
-  cuBgLease lease;
+  cuBgLease lease = {0};
   BOOL leasing = NO;
   BOOL typeRestored = YES;
   if(needsRecord && typeWin && cuResolveBgPointer()) {
@@ -1127,6 +1135,11 @@ static id execute(NSDictionary *p) {
   if([tool isEqual:@"record"]) return cuRecord(args);
   if([tool isEqual:@"recognize_text"]) return cuRecognizeText(args[@"file"]);
 #ifdef CU_TEST
+  if([tool isEqual:@"inspect_user_yield"]) {
+    cuTestIdleSeconds=args[@"idle_seconds"];
+    if([args[@"cancelled"] boolValue]) cuCancelled=1;
+    return @{@"yield_ms":@(cuYieldToUser(args))};
+  }
   if([tool isEqual:@"inspect_click_action"]) return @{@"action":cuClickAction((__bridge AXUIElementRef)args[@"element"],[args[@"context"] boolValue])?:NSNull.null};
   if([tool isEqual:@"inspect_element_identity"]) {
     cuValidateElementIdentity((__bridge AXUIElementRef)args[@"element"],args[@"target"]);
@@ -1409,6 +1422,7 @@ static id execute(NSDictionary *p) {
       // wait for a gap first; the up event is part of our own press and
       // must not wait.
       yieldMs=cuYieldToUser(args);
+      cuRequireForeground(inputApp);
     }
     cuCheckCancelled();
     id result=cuPostKey(args,inputApp.processIdentifier);

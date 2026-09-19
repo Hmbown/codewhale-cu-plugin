@@ -87,7 +87,10 @@ Where a shared surface is taken at all — a front lease for window-record
 input, a real-pointer gesture, foreground keys, an activation — the helper
 first waits for a gap in the person's hardware input rather than cutting
 between their keystrokes. The wait is bounded, never infinite, and every
-receipt that waited reports `yield_ms`. It is turn-taking, not a lock:
+successful receipt that waited reports `yield_ms`. If no quiet window
+arrives, `user_busy` means no input was sent: wait for the person to finish
+or use an already-authorized isolated computer; do not disable the yield
+or loop on retries. It is turn-taking, not a lock:
 `user_input_during_lease:true` still means the outcome is contested —
 say so.
 
