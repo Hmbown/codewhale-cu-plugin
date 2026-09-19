@@ -290,3 +290,17 @@ inside the existing helper/session ownership path. Native-picker integration
 remains open and is not part of the Windows CI qualification claim.
 
 Reference: [Apple ScreenCaptureKit overview](https://developer.apple.com/videos/play/wwdc2023/10136/).
+
+## Keyboard coexistence release blocker (2026-09-19)
+
+The user reported keyboard takeover during concurrent use. Background
+window-record routes borrowed the front process, including Unicode typing and
+web replacement. Source now refuses these paths before focus/input; the native
+lease boundary independently enforces foreground authorization. Background
+text requires the new native guard capability, so older helpers fail closed.
+Routine consent tests use recording fixtures, never the user's Calculator.
+
+This source change does not update an already installed app. Rebuild and qualify
+the exact helper, synchronize the Engine embed, and verify continuous human
+keyboard ownership in an authorized isolated trial before claiming coexistence.
+The native sharing picker alone cannot supply input isolation.
