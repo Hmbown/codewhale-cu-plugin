@@ -42,6 +42,27 @@ jobs:
         run: node --test --test-timeout=90000 tests/*.test.mjs
         timeout-minutes: 8
       - run: node scripts/check-receipts.mjs docs parity/results
+      - name: Build unsigned Windows preview
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          node scripts/build-app.mjs --platform windows --node-runtime (Get-Command node).Source
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $version = (Get-Content package.json | ConvertFrom-Json).version
+          $zip = "dist/Codewhale-Computer-Use-$version-windows-x64-preview.zip"
+          Compress-Archive -Path 'dist/windows/Codewhale Computer Use' -DestinationPath $zip
+          $hash = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower()
+          "$hash  $(Split-Path $zip -Leaf)" | Set-Content dist/SHA256SUMS-windows.txt
+          @{ version=$version; source=$env:GITHUB_SHA; platform='windows-x64'; signed=$false; node=(node --version) } | ConvertTo-Json | Set-Content dist/windows-preview.json
+      - uses: actions/upload-artifact@v4
+        if: runner.os == 'Windows'
+        with:
+          name: windows-preview
+          path: |
+            dist/*-windows-x64-preview.zip
+            dist/SHA256SUMS-windows.txt
+            dist/windows-preview.json
+          if-no-files-found: error
 
 # Signed release qualification is a separate macOS operation using an
 # existing notary profile: scripts/package-macos.mjs. This job never publishes.

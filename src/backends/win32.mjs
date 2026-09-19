@@ -100,7 +100,11 @@ public static class CUAutomationProviders {
   public static void Register() {
     var assembly = typeof(AutomationElement).Assembly.GetName();
     assembly.Name = "UIAutomationClientsideProviders";
-    ClientSettings.RegisterClientSideProviderAssembly(assembly);
+    // Legacy .NET clears its one-time default-proxy flag before walking a
+    // dynamic PowerShell stack, which can throw NullReferenceException.
+    // Retry only registration (no UI action); a second failure propagates.
+    try { ClientSettings.RegisterClientSideProviderAssembly(assembly); }
+    catch (System.NullReferenceException) { ClientSettings.RegisterClientSideProviderAssembly(assembly); }
   }
 }
 '@;
