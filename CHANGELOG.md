@@ -8,6 +8,8 @@
   Older helpers are refused for background typing until updated.
 - Linux semantic value edits select the supported accessibility interface
   before writing, verify the value, and never replay a refused or uncertain edit.
+- Disposable Linux desktops stop and reap their display processes before
+  container exit, preventing stale display locks after an orderly restart.
 - Routine consent tests use a recording backend and never launch, activate
   or quit a user's desktop application.
 - Windows UIA targets bind to observed window/element identities; display and
