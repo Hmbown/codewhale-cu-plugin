@@ -1,6 +1,6 @@
 # Release notes
 
-## 0.11.2 — shared-desktop reliability (unreleased candidate)
+## 0.11.2 — shared-desktop reliability
 
 - macOS background mode refuses window-record focus leases before input,
   including pointer fallbacks, modified keys and web value replacement.
@@ -24,6 +24,13 @@
   expires, before taking focus or sending input. Foreground key presses
   revalidate their app after waiting. Input arriving mid-action remains
   a documented limitation.
+
+Distribution: notarized universal macOS app; experimental unsigned Windows x64
+preview with bundled Node; Linux source and Docker desktop. Windows preview
+is not a signed production installer. Physical keyboard coexistence, native
+sharing-picker integration, fresh-machine permissions and Windows mixed-DPI
+acceptance remain open. The Codewhale Engine has its own release lifecycle;
+its pending-approval Stop fix is tracked separately in Core14c64b5bdc.
 
 ## 0.11.1 — background is the default on every platform
 
