@@ -12,6 +12,42 @@ Release status is recorded in [CHANGELOG.md](../CHANGELOG.md). Records below
 come from one maintainer Mac (arm64, Retina) and are evidence, not a
 publication verdict.
 
+### 0.11.3 — release qualification, 2026-09-21
+
+Protocol-conformance patch over
+[v0.11.2](https://github.com/Hmbown/codewhale-cu-plugin/releases/tag/v0.11.2):
+the MCP server answers `resources/templates/list` with an empty template list
+instead of `-32601`, so a host that probes the method because the advertised
+`resources` capability implies it stops recording a discovery warning at the
+start of every session. The capability advertisement and every existing method
+are unchanged; the dispatcher still refuses genuinely unknown methods. Users
+on 0.11.2 lose no capability — the warning was log noise — but they keep seeing
+it, because the installed bundle predates this fix.
+
+- Local source suite at the 0.11.3 source commit: **383 tests, 366 passed,
+  0 failed, 17 platform skips** in the CI ad-hoc signing posture
+  (`CODEWHALE_CU_SIGN_IDENTITY=-`); receipt hygiene
+  (`node scripts/check-receipts.mjs docs parity/results`) clean. Every skip is
+  a Windows-PowerShell gate; the Docker-desktop tests ran against a live
+  daemon.
+- Hosted CI runs the same suite on macOS, Ubuntu and Windows for this commit.
+- Fix verification against a rebuilt and installed bundle: `initialize`,
+  `resources/templates/list`, `resources/list`, `resources/read`,
+  `tools/list` and `skills/list` answered over stdio; a genuinely unknown
+  method still returned `-32601`; a fresh interactive session logged no
+  `resources/templates/list` warning, where the previous build logged one at
+  connect.
+- **Signed, notarized artifact: pending.** No Apple notary credential
+  (keychain profile) is present on the maintainer Mac, so
+  `scripts/package-macos.mjs` cannot submit. No 0.11.3 archive, disk image or
+  packaging receipt exists yet, and none may be published as this fix until
+  one does.
+- **Publication: not performed.** No `v0.11.3` tag, GitHub release or
+  marketplace sync exists for this source.
+
+Windows and Linux are untouched by this patch and carry their 0.11.2
+qualification; every open gate recorded there stays open.
+
 ### 0.11.2 — release qualification, 2026-09-19
 
 The publication pass includes macOS background-focus refusal, verified Linux
