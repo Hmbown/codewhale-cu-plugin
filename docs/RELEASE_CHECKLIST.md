@@ -37,11 +37,19 @@ it, because the installed bundle predates this fix.
   method still returned `-32601`; a fresh interactive session logged no
   `resources/templates/list` warning, where the previous build logged one at
   connect.
-- **Signed, notarized artifact: pending.** No Apple notary credential
-  (keychain profile) is present on the maintainer Mac, so
-  `scripts/package-macos.mjs` cannot submit. No 0.11.3 archive, disk image or
-  packaging receipt exists yet, and none may be published as this fix until
-  one does.
+- **Signed candidate: built and verified** from the release commit
+  (`4968228`) — universal (arm64 + x86_64) launcher and bundled Node 24.21.0,
+  `Developer ID Application: Hunter Bown (5RDNSHA5TY)` under the hardened
+  runtime, `codesign --verify --deep --strict` valid, bundled plugin reports
+  0.11.3. That candidate's MCP surface answered `initialize`,
+  `resources/templates/list` (an empty list, no error), `resources/list`,
+  `resources/read`, `tools/list` and `skills/list` over stdio, and a genuinely
+  unknown method still returned `-32601`.
+- **Notarization: blocked.** No Apple notary credential (keychain profile) is
+  present on the maintainer Mac, so `scripts/package-macos.mjs` cannot submit;
+  Gatekeeper assesses the candidate as `source=Unnotarized Developer ID` and
+  no staple ticket exists. No 0.11.3 archive, disk image or packaging receipt
+  exists yet, and none may be published as this fix until one does.
 - **Publication: not performed.** No `v0.11.3` tag, GitHub release or
   marketplace sync exists for this source.
 
