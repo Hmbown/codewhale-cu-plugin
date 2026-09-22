@@ -33,9 +33,28 @@ gap in the user's hardware input. What neither is:
 - **Consent persists per computer id.** `remember:true` writes
   `consent.json` under the state dir keyed by computer id — a re-registered
   computer with a new id asks again; a stolen id inherits its ledger.
-- **`app_script` is deliberately outside the ledger** — Automation consent
-  is macOS's own per-app boundary, enforced by the OS on the responsible
-  process.
+- **`app_script` is gated lexically, not sandboxed.** The server refuses
+  shell escapes (`do shell script`, `doShellScript`, terminal `do script`),
+  the Objective-C bridge, dynamic code, raw Apple event codes and System
+  Events keystrokes, and puts every app a script names — System Events and
+  each `process "X"` included — through the consent ledger. A script whose
+  target cannot be read statically is refused. This is defense in depth: JXA
+  is a full JavaScript runtime and a lexical check can be wrong, so the host's
+  per-script human approval is the floor. Consenting to System Events is
+  consenting to GUI control of the processes it names. Operators can set
+  `CODEWHALE_CU_APP_SCRIPT=off`, or `unrestricted` to drop the lexical
+  refusals (the ledger still applies to named apps).
+- **Irreversible-action confirmation reads labels.** Clicks and presses on
+  controls labelled pay, buy, place order, send, transfer, delete and close
+  relatives need a per-call user confirmation. A coordinate click is matched
+  against the latest observation only; a control never observed, a label in
+  another language, or an unlabelled icon is not recognized. The prompt that
+  confirms it is the host's `consent` approval card, so the host must never
+  auto-approve `consent allow`.
+- **Trajectories redact entered text.** Typed text, set values and clipboard
+  writes are stored as `[redacted]` (the plugin cannot tell a password field
+  from any other), and those steps are not replayable. Other arguments,
+  `app_script` sources included, are stored as sent in owner-only files.
 
 ## Spawned computers (0.10.0)
 
