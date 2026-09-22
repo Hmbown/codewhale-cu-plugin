@@ -81,6 +81,12 @@ function assertLease(name) {
   if (refusal) throw new ServerError(refusal.code, refusal.message, refusal.extra);
 }
 /** A request name (possibly a merged tool) that may deliver input. */
+// A consent decision (allow/deny/revoke, including an irreversible-action
+// confirm) must be its own top-level call the host shows the user. It is
+// never a run_actions step or a replayed trajectory step, where a past or
+// batched decision would pass as one the user just made.
+const CONSENT_DECISIONS = new Set(["consent_allow", "consent_deny", "consent_revoke"]);
+const isConsentDecision = (tool, args) => CONSENT_DECISIONS.has(tool) || (tool === "consent" && args?.action !== "status");
 const mayDeliverInput = (requestName) => requestName === "run_actions" || requestName === "trajectory_replay"
   || LEASE_GATED_TOOLS.has(requestName) || (MERGED_EXPANSION[requestName] ?? []).some((wire) => LEASE_GATED_TOOLS.has(wire));
 const cancelledCode = () => (controlStopped ? "control_stopped" : leasePreempted.has(currentSignal()) ? HUMAN_DRIVING : "cancelled");
@@ -808,7 +814,7 @@ async function callTool(params) {
           if (controlStopped && !READ_ONLY_TOOLS.has(call.tool)) { results.push({ tool: call.tool, ok: false, code: "control_stopped" }); break; }
           // A redacted step carries a placeholder, not what was entered —
           // replaying it would type "[redacted]" into the app.
-          if (call.replayable === false || call.redacted === true) { results.push({ tool: call.tool, ok: false, code: "not_replayable" }); break; }
+          if (call.replayable === false || call.redacted === true || isConsentDecision(call.tool, call.args)) { results.push({ tool: call.tool, ok: false, code: "not_replayable" }); break; }
           let body = null;
           try {
             const r = await callTool({ name: call.tool, arguments: call.args ?? {} });
@@ -824,7 +830,7 @@ async function callTool(params) {
       } finally { replaying = false; }
     }
     const failed = results.filter((r) => r.ok === false).length;
-    return { content: [{ type: "text", text: JSON.stringify(receipt(null, { ok: true, tool: "trajectory_replay", trajectory: path.basename(file), dry_run: dryRun, turns_in_file: calls.length, replayed: results.length, failed, ...(dryRun ? { plan: calls.map((c) => c.tool), not_replayable: calls.flatMap((c, i) => (c.replayable === false || c.redacted === true) ? [i] : []) } : { results }), note: dryRun ? "Nothing was executed. Run again without dry_run:true to replay through the normal gates." : "Replay re-entered the normal pipeline; grants, permissions and the kill switch still apply." })) }] };
+    return { content: [{ type: "text", text: JSON.stringify(receipt(null, { ok: true, tool: "trajectory_replay", trajectory: path.basename(file), dry_run: dryRun, turns_in_file: calls.length, replayed: results.length, failed, ...(dryRun ? { plan: calls.map((c) => c.tool), not_replayable: calls.flatMap((c, i) => (c.replayable === false || c.redacted === true || isConsentDecision(c.tool, c.args)) ? [i] : []) } : { results }), note: dryRun ? "Nothing was executed. Run again without dry_run:true to replay through the normal gates." : "Replay re-entered the normal pipeline; grants, permissions and the kill switch still apply." })) }] };
   }
 
   if (name === "computer_list") {
@@ -991,6 +997,7 @@ async function callTool(params) {
       for (const [i, step] of steps.entries()) {
         if (!step || typeof step.tool !== "string") throw new ServerError("bad_args", `step ${i} needs a tool name`);
         if (step.tool === "run_actions") throw new ServerError("bad_args", "run_actions cannot nest");
+        if (isConsentDecision(step.tool, step.arguments)) throw new ServerError("bad_args", "consent decisions cannot be a run_actions step — record each one as its own consent call after the user answers");
         if (!TOOL_NAMES.has(step.tool)) throw new ServerError("unknown_tool", `unknown tool "${step.tool}"`);
         const result = await callTool({ name: step.tool, arguments: { ...(step.arguments ?? {}), computer: computer.id } });
         const body = JSON.parse(result.content[0].text);

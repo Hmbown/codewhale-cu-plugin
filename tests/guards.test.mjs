@@ -226,6 +226,28 @@ test("E5: delete through perform_action, a coordinate click or a menu is gated; 
 
 // ---- helper staleness (K6) ----
 
+test("a consent decision is never a run_actions step or a replayed trajectory step", async () => {
+  // Batched: refused before any step runs, so the grant is not recorded.
+  const batched = await tool("run_actions", { steps: [
+    { tool: "consent", arguments: { action: "allow", app: "BatchedApp" } },
+    { tool: "screenshot", arguments: {} },
+  ] });
+  assert.equal(batched.error?.code, "bad_args", JSON.stringify(batched));
+  assert.match(batched.error.message, /consent decisions cannot be a run_actions step/);
+  const status = await tool("consent", { action: "status" });
+  assert.ok(!JSON.stringify(status).includes("BatchedApp"), "the batched allow was not recorded");
+  // Replayed: a recorded allow/revoke stops the replay instead of re-deciding.
+  await tool("trajectory", { action: "start" });
+  assert.equal((await tool("consent", { action: "allow", app: "ReplayApp" })).ok, true);
+  assert.equal((await tool("consent", { action: "revoke", app: "ReplayApp" })).ok, true);
+  const stopped = await tool("trajectory", { action: "stop" });
+  const dry = await tool("trajectory", { action: "replay", id: path.basename(stopped.file), dry_run: true });
+  assert.deepEqual(dry.not_replayable, [0, 1], JSON.stringify(dry));
+  const replay = await tool("trajectory", { action: "replay", id: path.basename(stopped.file) });
+  assert.equal(replay.results[0].code, "not_replayable", JSON.stringify(replay));
+  assert.ok(!JSON.stringify(await tool("consent", { action: "status" })).includes("ReplayApp"), "the replay did not re-grant ReplayApp");
+});
+
 test("D2: a helper newer than the bundled plugin is not stale; an older one is", () => {
   assert.equal(newerVersion("0.11.3", "0.11.2"), true);
   assert.equal(newerVersion("0.11.10", "0.11.9"), true);

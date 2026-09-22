@@ -13,6 +13,10 @@
   that exact call with `consent {action:"allow", confirm}`; no app grant
   covers it. The skill gains a section on untrusted screen text, links and
   irreversible actions, and routes signed-in web work to Chromewhale.
+- A consent decision (allow, deny, revoke or confirm) must be its own call:
+  it is refused as a `run_actions` step and stops a trajectory replay
+  (`not_replayable`), so a batched or recorded decision never passes as one
+  the user just made.
 - Trajectories redact typed text, set values and clipboard writes, mark those
   steps not replayable, and are written 0600 in a 0700 directory.
 - A helper newer than the plugin no longer reports itself as stale.
