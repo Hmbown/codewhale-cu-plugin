@@ -10,8 +10,9 @@ import * as registry from "../src/registry.mjs";
 import * as consent from "../src/consent.mjs";
 import { backendFor, installRemoteAgent, executorFor, closeAppSession, routeFingerprint, closeSshChannel, SESSION_ID } from "../src/transport.mjs";
 import { spawnDockerComputer, destroyDockerComputer, destroySessionSpawns } from "../src/spawn.mjs";
-import { TOOLS, TOOL_NAMES, REQUIRED_ARGS, ELEMENT_ONLY_TARGET, READ_ONLY_TOOLS, REMOTE_TOOLS, BACKEND_METHOD, resolveTool, parseGrant, MERGED_EXPANSION } from "../src/tools.mjs";
-import { tryJson, withSignal, throwIfAborted, wait } from "../src/exec.mjs";
+import { TOOLS, TOOL_NAMES, REQUIRED_ARGS, ELEMENT_ONLY_TARGET, READ_ONLY_TOOLS, REMOTE_TOOLS, BACKEND_METHOD, resolveTool, parseGrant, MERGED_EXPANSION, LEASE_GATED_TOOLS } from "../src/tools.mjs";
+import { tryJson, withSignal, throwIfAborted, wait, currentSignal } from "../src/exec.mjs";
+import { inputRefusal, watchLease, HUMAN_DRIVING } from "../src/lease.mjs";
 import { APP_VERSION } from "../src/app-socket.mjs";
 import { createRecorder, readTrajectory, listTrajectories, resolveTrajectory, isTrajectoryTool } from "../src/trajectory.mjs";
 
@@ -67,6 +68,21 @@ const INLINE_IMAGE_MAX_BYTES = Number(process.env.CODEWHALE_CU_MAX_IMAGE_BYTES) 
 
 /** Base64 expands 3 bytes to 4, padded to a multiple of 4. */
 const encodedSize = (bytes) => Math.ceil(bytes / 3) * 4;
+
+// ---------- human/agent control lease (shared computers) ----------
+// Signals of requests cancelled because a person took control: their
+// "cancelled" outcome is reported as computer_busy_human_driving instead.
+const leasePreempted = new WeakSet();
+/** Throw the lease refusal for an input tool; no-op without a lease file. */
+function assertLease(name) {
+  if (!LEASE_GATED_TOOLS.has(name)) return;
+  const refusal = inputRefusal(name);
+  if (refusal) throw new ServerError(refusal.code, refusal.message, refusal.extra);
+}
+/** A request name (possibly a merged tool) that may deliver input. */
+const mayDeliverInput = (requestName) => requestName === "run_actions" || requestName === "trajectory_replay"
+  || LEASE_GATED_TOOLS.has(requestName) || (MERGED_EXPANSION[requestName] ?? []).some((wire) => LEASE_GATED_TOOLS.has(wire));
+const cancelledCode = () => (controlStopped ? "control_stopped" : leasePreempted.has(currentSignal()) ? HUMAN_DRIVING : "cancelled");
 
 function receipt(computer, extra) {
   return {
@@ -654,6 +670,11 @@ async function callTool(params) {
   if (controlStopped && !READ_ONLY_TOOLS.has(name)) {
     return { content: [{ type: "text", text: JSON.stringify(fail(null, "control_stopped", "stop_computer_control is active; no further actions are permitted this session")) }], isError: true };
   }
+  // Reversible, unlike the kill switch: while a person holds the control
+  // lease, input tools refuse and observation keeps working.
+  try { assertLease(name); } catch (err) {
+    return { content: [{ type: "text", text: JSON.stringify(fail(null, err.code, err.message, { tool: name, ...(err.extra ?? {}) })) }], isError: true };
+  }
 
   if (name === "wait") {
     const s = Math.max(0, Math.min(30, Number(args.seconds) || 1));
@@ -955,6 +976,7 @@ async function callTool(params) {
       // Re-check the kill switch: a stop that arrived while the executor was
       // being resolved still blocks this dispatch.
       if (controlStopped && !READ_ONLY_TOOLS.has(name)) throw new ServerError("control_stopped", "stop_computer_control is active; no further actions are permitted this session");
+      assertLease(name);
       inFlight++;
       try {
         dispatched = true;
@@ -1001,6 +1023,7 @@ async function callTool(params) {
       throwIfAborted();
       await assertCurrentRoute(computer, binding);
       if (controlStopped && !READ_ONLY_TOOLS.has(name)) throw new ServerError("control_stopped", "stop_computer_control is active; no further actions are permitted this session");
+      assertLease(name);
       inFlight++;
       try {
         dispatched = true;
@@ -1108,7 +1131,8 @@ async function callTool(params) {
     // so a narrowed session knows its bounds even when the probe itself failed
     // (for example a headless Linux host with no DISPLAY to inspect).
     const grant = name === "request_access" ? grantReport() : null;
-    return { content: [{ type: "text", text: JSON.stringify(fail(computer, err.code ?? "tool_error", err.message ?? String(err), {
+    const code = err.code === "cancelled" ? cancelledCode() : err.code ?? "tool_error";
+    return { content: [{ type: "text", text: JSON.stringify(fail(computer, code, err.message ?? String(err), {
       tool: name, switched,
       ...(err.extra ?? {}),
       ...(grant ? { grant } : {}),
@@ -1307,7 +1331,7 @@ const HANDLERS = {
       return await callToolRecorded(params ?? {});
     } catch (err) {
       if (err?.code !== "cancelled") throw err;
-      return { content: [{ type: "text", text: JSON.stringify(fail(null, controlStopped ? "control_stopped" : "cancelled", err.message)) }], isError: true };
+      return { content: [{ type: "text", text: JSON.stringify(fail(null, cancelledCode(), err.message)) }], isError: true };
     } finally { release(); }
   },
   "notifications/cancelled"(params) {
@@ -1380,6 +1404,19 @@ async function shutdown() {
   process.exit(0);
 }
 process.stdin.on("end", shutdown);
+
+// When a person takes the lease mid-gesture, cancel in-flight input and
+// release any held button or key so they never inherit a pressed mouse.
+watchLease(() => {
+  let preempted = 0;
+  for (const request of requests.values()) {
+    if (!request.name || !mayDeliverInput(request.name)) continue;
+    leasePreempted.add(request.controller.signal);
+    request.controller.abort();
+    preempted++;
+  }
+  if (preempted || inFlight) releaseControl({ releaseOnly: true }).catch(() => {});
+});
 for (const signal of ["SIGTERM", "SIGINT", "SIGHUP"]) process.on(signal, shutdown);
 
 async function handleLine(line) {

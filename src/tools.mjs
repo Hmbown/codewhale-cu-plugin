@@ -264,6 +264,7 @@ export const TOOLS = [
       properties: {
         action: { enum: ["start", "status", "navigate", "click", "type", "screenshot", "stop"] },
         url: { type: "string", description: "http(s):// or about:blank (start, navigate)" },
+        tab: { type: "string", description: "attach mode only (start): a tab id from status to work in — a person's tab is used only when named" },
         selector: { type: "string", description: "CSS selector (click, or type focus)" },
         point: { type: "object", properties: { x: { type: "number" }, y: { type: "number" } }, required: ["x", "y"], additionalProperties: false, description: "page-viewport pixels — the browser screenshot space, never screen points" },
         text: { type: "string", description: "text to insert (type)" },
@@ -276,8 +277,8 @@ export const TOOLS = [
   },
   {
     name: "browser_start",
-    description: "Launch or reuse the self-owned Chromium profile and open this session's tab. The user's own browser is never touched.",
-    inputSchema: { type: "object", properties: { url: { type: "string", description: "optional http(s) URL to open" }, computer: computerParam }, additionalProperties: false },
+    description: "Launch or reuse the self-owned Chromium profile and open this session's tab. The user's own browser is never touched. On a Codewhale Computer (attach mode) it attaches to the computer's shared browser instead; `tab` picks one of its tabs.",
+    inputSchema: { type: "object", properties: { url: { type: "string", description: "optional http(s) URL to open" }, tab: { type: "string", description: "attach mode: tab id from browser_status" }, computer: computerParam }, additionalProperties: false },
   },
   {
     name: "browser_status",
@@ -723,6 +724,21 @@ for (const tool of TOOLS) {
  * post-kill-switch set that also drives the safety valve).
  */
 export const OBSERVATION_TOOLS = new Set(TOOLS.filter((t) => t.annotations.readOnlyHint === true).map((t) => t.name));
+
+/**
+ * Tools refused with `computer_busy_human_driving` while a person holds the
+ * control lease (src/lease.mjs). Derived fail-closed: every tool that is not
+ * an observation and acts on the world is gated unless it is listed here as
+ * session bookkeeping. run_actions and trajectory_replay are gated per step
+ * (they re-enter callTool); browser_stop only detaches in attach mode.
+ */
+const LEASE_EXEMPT = new Set([
+  "computer", "computer_switch", "computer_register", "computer_spawn", "computer_remove",
+  "trajectory_replay", "run_actions", "browser_stop",
+]);
+export const LEASE_GATED_TOOLS = new Set(TOOLS.filter((t) =>
+  !OBSERVATION_TOOLS.has(t.name) && !READ_ONLY_TOOLS.has(t.name) && !LEASE_EXEMPT.has(t.name)
+  && (t.annotations.openWorldHint === true || t.annotations.destructiveHint === true)).map((t) => t.name));
 
 /**
  * Merged-away names. They stay callable as aliases (receipts, pinned hosts and
