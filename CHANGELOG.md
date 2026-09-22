@@ -1,6 +1,6 @@
 # Release notes
 
-## 0.11.3 — MCP protocol conformance (unreleased candidate)
+## 0.11.3 — MCP protocol conformance
 
 - The MCP server answers `resources/templates/list` with an empty template
   list instead of `-32601 method not found`. It publishes a fixed skill pack

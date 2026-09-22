@@ -45,13 +45,18 @@ it, because the installed bundle predates this fix.
   `resources/templates/list` (an empty list, no error), `resources/list`,
   `resources/read`, `tools/list` and `skills/list` over stdio, and a genuinely
   unknown method still returned `-32601`.
-- **Notarization: blocked.** No Apple notary credential (keychain profile) is
-  present on the maintainer Mac, so `scripts/package-macos.mjs` cannot submit;
-  Gatekeeper assesses the candidate as `source=Unnotarized Developer ID` and
-  no staple ticket exists. No 0.11.3 archive, disk image or packaging receipt
-  exists yet, and none may be published as this fix until one does.
-- **Publication: not performed.** No `v0.11.3` tag, GitHub release or
-  marketplace sync exists for this source.
+- **Notarization: complete.** The App Store Connect Team Issuer ID was
+  recovered on the maintainer Mac and a `codewhale-cu` notarytool keychain
+  profile now authenticates (`xcrun notarytool history` returns this team's
+  submission history). Apple accepted both submissions —
+  app `eeed7947-6ffd-4ae5-aa7e-d76e39029a5f` and
+  disk image `ed5e88e0-88df-4e52-be9a-3bccb51f596f` — and both are stapled.
+  Gatekeeper now assesses the app and the disk image as
+  `source=Notarized Developer ID`. The 46 packaged runtime files are
+  byte-identical to canonical source.
+- **Publication: pending at this commit.** This is the release commit; the
+  `v0.11.3` tag, GitHub release and marketplace mirror sync are recorded in
+  §5 once they exist.
 
 Windows and Linux are untouched by this patch and carry their 0.11.2
 qualification; every open gate recorded there stays open.
