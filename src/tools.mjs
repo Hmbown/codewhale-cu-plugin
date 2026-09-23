@@ -8,7 +8,7 @@ const computerParam = {
 
 const strategyParam = {
   enum: ["auto", "a11y", "event", "app"],
-  description: "macOS auto (default): element targets press that exact revalidated element and fail closed, with no coordinate fallback; coordinate targets hit-test the point for an accessibility press, including focus of a field that is not AXPressable. a11y: require an accessibility press or focus and fail closed otherwise. app: if accessibility cannot act, post a pointer event only when the point is inside the bound app's window, then restore the cursor — never a global desktop click. event: force the guarded raw pointer event (shared-desktop / activate:true). Other platforms use raw events. action_sent confirms dispatch, not the effect; observe again before deciding another action.",
+  description: "macOS auto (default): element targets press that exact revalidated element and fail closed, with no coordinate fallback; coordinate targets hit-test the point for an accessibility press, including focus of a field that is not AXPressable. a11y: require an accessibility press or focus and fail closed otherwise. app: if accessibility cannot act, send the click as a window-routed event to the bound app's window. event: skip the accessibility hit-test and send the window-routed click directly. On macOS the user's cursor is never moved; raw pointer input needs activate:true because the window route briefly makes the app key. Other platforms use raw events. action_sent confirms dispatch, not the effect; observe again before deciding another action.",
 };
 
 const elementTargetSchema = {
@@ -99,7 +99,7 @@ export const TOOLS = [
   },
   {
     name: "consent",
-    description: "Per-app consent on the local computer. Any call that targets an app — open_application, an app_ref, an element, or an action on the bound app — refuses consent_required until the user decides; record their answer here. action status | allow | deny | revoke. app is a name or bundle id (or pid:/number for a pid); scope 'foreground' is the separate darwin decision for taking the shared pointer (open_application activate:true). Decisions apply to this session; remember:true persists them.",
+    description: "Per-app consent on the local computer. Any call that targets an app — open_application, an app_ref, an element, or an action on the bound app — refuses consent_required until the user decides; record their answer here. action status | allow | deny | revoke. app is a name or bundle id (or pid:/number for a pid); scope 'foreground' is the separate darwin decision for foreground control (open_application activate:true). Decisions apply to this session; remember:true persists them.",
     inputSchema: {
       type: "object",
       required: ["action"],
@@ -107,7 +107,7 @@ export const TOOLS = [
         action: { enum: ["status", "allow", "deny", "revoke"] },
         app: { type: "string", description: "App identity: name ('Safari'), bundle id ('com.apple.Safari'), or pid ('pid:1234')" },
         name: { type: "string" }, bundle_id: { type: "string" }, pid: { type: "integer" },
-        scope: { enum: ["app", "foreground"], description: "app (default): consent to use one application. foreground: consent to take the shared pointer/focus (darwin activate:true)" },
+        scope: { enum: ["app", "foreground"], description: "app (default): consent to use one application. foreground: consent to foreground control and key focus (darwin activate:true)" },
         remember: { type: "boolean", description: "Persist the decision across sessions (default: this session only)" },
         confirm: { type: "string", description: "allow only: the token from a confirmation_required refusal. Record it only after the user approved that exact action (pay, buy, send, transfer, delete) in their own words; it admits one identical call." },
         computer: computerParam,
@@ -349,7 +349,7 @@ export const TOOLS = [
       properties: {
         name: { type: "string" }, bundle_id: { type: "string" }, url: { type: "string" },
         pid: { type: "integer", description: "Bind to this exact process. Use when two processes share a bundle id (list_apps shows both); it takes precedence over name and bundle_id and never launches anything." },
-        activate: { type: "boolean", description: "Bring to foreground; defaults to false — background is the default on every platform. On macOS false keeps process-bound keyboard/accessibility control and refuses shared pointer gestures; on Windows it launches the app minimized; on Linux it restores the previously focused window after launch. True selects shared-desktop control and requires the separate foreground consent; use only when the user has authorized exclusive desktop use. Neither mode is an isolated computer." },
+        activate: { type: "boolean", description: "Bring to foreground; defaults to false — background is the default on every platform. On macOS false keeps process-bound keyboard/accessibility control and refuses raw pointer gestures (they would borrow key focus); on Windows it launches the app minimized; on Linux it restores the previously focused window after launch. True selects foreground control and requires the separate foreground consent — pointer input still goes to the app's window, never the user's cursor; use only when the user has authorized exclusive desktop use. Neither mode is an isolated computer." },
         computer: computerParam,
       },
       additionalProperties: false,
@@ -361,7 +361,7 @@ export const TOOLS = [
     inputSchema: { type: "object", required: ["target"], properties: { target: targetSchema, button: { enum: ["left", "right", "middle"], default: "left" }, clicks: { type: "integer", minimum: 1, maximum: 3, default: 1 }, strategy: strategyParam, computer: computerParam }, additionalProperties: false },
   },
   {
-    name: "pointer", description: "Raw pointer primitives: action \"move\" (hover without clicking), \"down\" (press and hold), \"up\" (release; target optional — releases at the last point). Background mode refuses these (shared pointer); they exist for explicit shared-desktop work.",
+    name: "pointer", description: "Raw pointer primitives: action \"move\" (hover without clicking), \"down\" (press and hold), \"up\" (release; target optional — releases at the last point). On macOS these drive the Codewhale pointer, never the user\'s cursor: move is a window-routed hover, and down/move/up buffer a drag that reaches the window on up. They need activate:true.",
     inputSchema: { type: "object", required: ["action"], properties: { action: { enum: ["move", "down", "up"] }, target: targetSchema, computer: computerParam }, additionalProperties: false },
   },
   {

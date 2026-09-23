@@ -1,5 +1,21 @@
 # Release notes
 
+## Unreleased — the agent never drives the user's cursor (macOS)
+
+- **Every macOS pointer gesture is window-routed.** Clicks, hover, drag and
+  wheel go to a window of the bound app as window-routed event records in
+  both background and `activate:true` modes. The HID-tap `pointer_sequence`
+  route, the `strategy:"app"` move-and-restore fallback and native
+  `release_input` are gone; the helper refuses them with
+  `real_pointer_refused`. Foreground mode no longer means shared pointer:
+  binding receipts report `shared_pointer: false` and
+  `pointer_route: "window-record"`.
+- `pointer` down/move/up buffer a drag on the Codewhale pointer and deliver it
+  to the window on `up`; nothing is held on a real button, so there is
+  nothing to release on disconnect.
+- `activate:true` still takes foreground and keyboard focus; Windows and
+  Linux raw input is unchanged and still shares the desktop.
+
 ## Unreleased — safety floor
 
 - `app_script` is app scripting, not a shell: `do shell script`,

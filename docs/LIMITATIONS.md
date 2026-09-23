@@ -252,14 +252,16 @@ way it does. Receipts: `parity/results/darwin-aqua-2026-09-07.json`,
   paths now refuse with `background_focus_required` before a lease or input.
   Accessibility actions remain available; unsupported controls need browser
   control or a separate computer. A quiet-input wait is not isolation.
-- **Shared pointer gestures remain explicit.** `strategy:"event"` and the
-  held-button tools (`mouse_move`, `left_mouse_down`/`left_mouse_up`) still
-  require `activate:true` shared-desktop control. That moves the user's
-  cursor (it is put back afterwards: `pointer_restored: true`) and requires
-  the target application to remain frontmost. Gestures stop on focus loss
-  and never reactivate the target. The receipt carries `strategy: "event"`,
-  `pointer_moved: true`, `foreground_taken`, `foreground_before` and
-  `foreground_after`.
+- **The agent never drives the user's cursor.** Every pointer gesture —
+  clicks under any `strategy`, hover, drag and wheel — is a window-routed
+  event record addressed to a window of the bound app (`strategy:
+  "window-record"`, `pointer_moved: false`). There is no HID-tap route and no
+  move-and-restore fallback; the helper refuses `pointer_sequence` and
+  `release_input` with `real_pointer_refused`. Raw pointer input still needs
+  `activate:true`, because the window route briefly makes the app key.
+  `left_mouse_down`/`mouse_move`/`left_mouse_up` buffer a drag and deliver it
+  on release, so the agent cannot observe mid-drag. A helper without the
+  window route refuses `bg_dispatch_unavailable`.
 - **The foreground cannot be given back.** macOS 14+ ignores activation
   requests from a process that is not itself frontmost — measured for both
   `-[NSRunningApplication activateWithOptions:]` and setting `AXFrontmost`. The
