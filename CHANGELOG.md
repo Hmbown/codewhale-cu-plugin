@@ -1,6 +1,12 @@
 # Release notes
 
-## Unreleased — the agent never drives the user's cursor (macOS)
+## 0.12.0 — the agent gets its own pointer
+
+The agent no longer uses the person's cursor on macOS; the shared-computer
+attach mode lands for Codewhale Computers; and a safety floor gates app
+scripting, irreversible clicks and recorded consent.
+
+### The agent never drives the user's cursor (macOS)
 
 - **Every macOS pointer gesture is window-routed.** Clicks, hover, drag and
   wheel go to a window of the bound app as window-routed event records in
@@ -16,7 +22,22 @@
 - `activate:true` still takes foreground and keyboard focus; Windows and
   Linux raw input is unchanged and still shares the desktop.
 
-## Unreleased — safety floor
+### Shared-computer attach mode (Codewhale Computers)
+
+- **Browser attach:** `CODEWHALE_CU_BROWSER_ATTACH=/run/cw/cdp.sock` connects
+  to the shared Chromium's CDP bridge instead of launching a private browser.
+  The agent opens and fronts its own tab beside the person's, `status` lists
+  every tab, `start {tab}` moves to a named one, and `stop` only detaches — no
+  tab or browser is closed. A second controller gets `browser_busy`.
+- **Control lease gate:** with `CODEWHALE_CU_LEASE_FILE`, every input tool
+  refuses `computer_busy_human_driving` while a person holds the lease;
+  observation keeps working and hand-back restores input without a restart.
+  An unreadable lease fails closed (`computer_lease_unreadable`).
+- **Turn hold:** `codewhale-cu-turn-hold` keeps a Sprite Task registered for
+  the turn (5 min capped expiry, refreshed every 60 s) and releases it when
+  the turn ends.
+
+### Safety floor
 
 - `app_script` is app scripting, not a shell: `do shell script`,
   `doShellScript`, terminal `do script`, the Objective-C bridge, dynamic code,
@@ -39,7 +60,8 @@
 - `have()` resolves tools on PATH in-process instead of spawning
   `which`/`where`, which timed out on loaded Windows runners and turned the
   v0.11.2 and v0.11.3 tag runs red; a Windows test fixture retries a rename
-  that a concurrent reader briefly blocks.
+  that a concurrent reader briefly blocks. The Sprite Unix-socket transport
+  tests skip on Windows, which cannot bind the socket path.
 
 ## 0.11.3 — MCP protocol conformance
 

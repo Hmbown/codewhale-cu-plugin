@@ -7,7 +7,7 @@
 
 **By Codewhale · macOS beta (notarized app and source) · Windows experimental unsigned preview · Linux experimental source/Docker**
 
-The [0.11.3 release](https://github.com/Hmbown/codewhale-cu-plugin/releases/tag/v0.11.3)
+The [0.12.0 release](https://github.com/Hmbown/codewhale-cu-plugin/releases/tag/v0.12.0)
 provides the notarized universal Mac app and an **unsigned Windows x64 preview**.
 The Windows ZIP bundles Node and includes setup instructions; it is intended
 for testing, with physical-device, mixed-DPI and signing acceptance still open.
@@ -74,7 +74,7 @@ in that order. If it names a permission, the fix is in
 **Status.** Release status is recorded in [CHANGELOG.md](CHANGELOG.md). The
 notarized Mac app is published on this repository's
 [GitHub releases](https://github.com/Hmbown/codewhale-cu-plugin/releases)
-(latest stable: v0.11.3, matching the source in this checkout); remaining
+(latest stable: v0.12.0, matching the source in this checkout); remaining
 gates are tracked in [the release checklist](docs/RELEASE_CHECKLIST.md). The
 [setup page](https://codewhale.net/computer-use) offers the notarized disk
 image directly.
