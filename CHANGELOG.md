@@ -1,5 +1,46 @@
 # Release notes
 
+## Unreleased — the agent never drives the user's cursor (macOS)
+
+- **Every macOS pointer gesture is window-routed.** Clicks, hover, drag and
+  wheel go to a window of the bound app as window-routed event records in
+  both background and `activate:true` modes. The HID-tap `pointer_sequence`
+  route, the `strategy:"app"` move-and-restore fallback and native
+  `release_input` are gone; the helper refuses them with
+  `real_pointer_refused`. Foreground mode no longer means shared pointer:
+  binding receipts report `shared_pointer: false` and
+  `pointer_route: "window-record"`.
+- `pointer` down/move/up buffer a drag on the Codewhale pointer and deliver it
+  to the window on `up`; nothing is held on a real button, so there is
+  nothing to release on disconnect.
+- `activate:true` still takes foreground and keyboard focus; Windows and
+  Linux raw input is unchanged and still shares the desktop.
+
+## Unreleased — safety floor
+
+- `app_script` is app scripting, not a shell: `do shell script`,
+  `doShellScript`, terminal `do script`, the Objective-C bridge, dynamic code,
+  raw Apple event codes and System Events keystrokes refuse `script_refused`,
+  and every app a script names — System Events and each `process "X"` it
+  drives included — goes through the per-app consent ledger. Operators can set
+  `CODEWHALE_CU_APP_SCRIPT=off|unrestricted`.
+- Clicks and presses on controls labelled pay, buy, place order, send,
+  transfer or delete refuse `confirmation_required` until the user confirms
+  that exact call with `consent {action:"allow", confirm}`; no app grant
+  covers it. The skill gains a section on untrusted screen text, links and
+  irreversible actions, and routes signed-in web work to Chromewhale.
+- A consent decision (allow, deny, revoke or confirm) must be its own call:
+  it is refused as a `run_actions` step and stops a trajectory replay
+  (`not_replayable`), so a batched or recorded decision never passes as one
+  the user just made.
+- Trajectories redact typed text, set values and clipboard writes, mark those
+  steps not replayable, and are written 0600 in a 0700 directory.
+- A helper newer than the plugin no longer reports itself as stale.
+- `have()` resolves tools on PATH in-process instead of spawning
+  `which`/`where`, which timed out on loaded Windows runners and turned the
+  v0.11.2 and v0.11.3 tag runs red; a Windows test fixture retries a rename
+  that a concurrent reader briefly blocks.
+
 ## 0.11.3 — MCP protocol conformance
 
 - The MCP server answers `resources/templates/list` with an empty template
