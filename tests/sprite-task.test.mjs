@@ -9,6 +9,8 @@ import os from "node:os";
 import path from "node:path";
 import { once } from "node:events";
 import { createTaskHold, expireSeconds, spriteApi } from "../src/sprite-task.mjs";
+// These transports are Unix sockets inside the Linux Sprite; Windows cannot bind the path.
+const UNIX_SOCKETS = { skip: process.platform === "win32" && "Unix-socket transport (Sprite/Linux only)" };
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), "cu-task-"));
@@ -50,7 +52,7 @@ test("expiry is capped at 5 minutes", () => {
   assert.throws(() => createTaskHold({ name: "turn-1", expire: "60s", refreshMs: 60_000 }), /shorter/);
 });
 
-test("acquire registers, refresh re-registers, release deletes", async (t) => {
+test("acquire registers, refresh re-registers, release deletes", UNIX_SOCKETS, async (t) => {
   const sock = path.join(dir, "api1.sock");
   const api = await fakeApi(sock);
   t.after(() => api.server.close());
@@ -68,7 +70,7 @@ test("acquire registers, refresh re-registers, release deletes", async (t) => {
   assert.ok(api.log.some((l) => l.startsWith("PUT /v1/tasks/turn-abc")));
 });
 
-test("refresh falls back to POST when PUT is not offered", async (t) => {
+test("refresh falls back to POST when PUT is not offered", UNIX_SOCKETS, async (t) => {
   const sock = path.join(dir, "api2.sock");
   const api = await fakeApi(sock, { putStatus: 405 });
   t.after(() => api.server.close());
@@ -81,7 +83,7 @@ test("refresh falls back to POST when PUT is not offered", async (t) => {
   assert.ok(!events.includes("refresh_failed"));
 });
 
-test("turn-hold CLI holds for the turn and releases on stdin EOF (parent gone)", async (t) => {
+test("turn-hold CLI holds for the turn and releases on stdin EOF (parent gone)", UNIX_SOCKETS, async (t) => {
   const sock = path.join(dir, "api3.sock");
   const api = await fakeApi(sock);
   t.after(() => api.server.close());

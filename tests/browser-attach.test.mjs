@@ -8,6 +8,8 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { createBrowser, connectPipeSocket, attachSocket } from "../src/browser-cdp.mjs";
+// These transports are Unix sockets inside the Linux Sprite; Windows cannot bind the path.
+const UNIX_SOCKETS = { skip: process.platform === "win32" && "Unix-socket transport (Sprite/Linux only)" };
 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), "cu-attach-"));
 after(() => fs.rmSync(dir, { recursive: true, force: true }));
@@ -58,7 +60,7 @@ test("attachSocket reads CODEWHALE_CU_BROWSER_ATTACH", () => {
   assert.equal(attachSocket({ CODEWHALE_CU_BROWSER_ATTACH: " /run/cw/cdp.sock " }), "/run/cw/cdp.sock");
 });
 
-test("attach: opens a visible tab beside the person's, lists their tabs, stop only detaches", async (t) => {
+test("attach: opens a visible tab beside the person's, lists their tabs, stop only detaches", UNIX_SOCKETS, async (t) => {
   const sock = path.join(dir, "a.sock");
   const bridge = await fakeBridge(sock, { tabs: [{ targetId: "human-1", url: "https://news.example/", title: "News" }] });
   t.after(() => bridge.server.close());
@@ -93,7 +95,7 @@ test("attach: opens a visible tab beside the person's, lists their tabs, stop on
   assert.ok(bridge.calls.includes("Target.detachFromTarget"));
 });
 
-test("attach: adopts a lone blank tab instead of stacking a second", async (t) => {
+test("attach: adopts a lone blank tab instead of stacking a second", UNIX_SOCKETS, async (t) => {
   const sock = path.join(dir, "b.sock");
   const bridge = await fakeBridge(sock, { tabs: [{ targetId: "blank", url: "chrome://newtab/", title: "New Tab" }] });
   t.after(() => bridge.server.close());
@@ -104,7 +106,7 @@ test("attach: adopts a lone blank tab instead of stacking a second", async (t) =
   await browser.close();
 });
 
-test("attach: a second controller gets browser_busy; a missing bridge gets browser_unavailable", async (t) => {
+test("attach: a second controller gets browser_busy; a missing bridge gets browser_unavailable", UNIX_SOCKETS, async (t) => {
   const sock = path.join(dir, "c.sock");
   const bridge = await fakeBridge(sock, { tabs: [] });
   t.after(() => bridge.server.close());
