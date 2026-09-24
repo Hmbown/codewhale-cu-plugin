@@ -540,6 +540,34 @@ static void axPrepare(AXUIElementRef app) {
   AXUIElementSetAttributeValue(app,(__bridge CFStringRef)@"AXEnhancedUserInterface",kCFBooleanTrue);
   AXUIElementSetAttributeValue(app,(__bridge CFStringRef)@"AXManualAccessibility",kCFBooleanTrue);
 }
+static void axSetEnhancedUI(AXUIElementRef app, BOOL on) {
+#ifdef CU_TEST
+  if([(__bridge id)app isKindOfClass:NSMutableDictionary.class]) {
+    NSMutableDictionary *fake=(__bridge NSMutableDictionary *)app;
+    fake[@"AXEnhancedUserInterface"]=@(on);
+    [fake[@"writes"] addObject:on?@"AXEnhancedUserInterface=1":@"AXEnhancedUserInterface=0"];
+    return;
+  }
+#endif
+  AXUIElementSetAttributeValue(app,(__bridge CFStringRef)@"AXEnhancedUserInterface",on?kCFBooleanTrue:kCFBooleanFalse);
+}
+/**
+ * Run window geometry writes with AXEnhancedUserInterface off. While it is on
+ * (axPrepare turns it on for every app we observe, and it stays on for the life
+ * of that process) AppKit animates each AXPosition/AXSize write over ~200 ms,
+ * and a later write cancels the running animation where it stands: a 50 ms
+ * position re-assert froze a 1100x800 -> 1600x900 resize at 1232x827. Window
+ * managers (Rectangle, yabai) clear the attribute around frame writes for the
+ * same reason. It is restored afterwards, even if the writes throw, so content
+ * observation of Chromium/WebKit apps keeps working.
+ */
+static void cuWithoutEnhancedUI(AXUIElementRef app, void (^work)(void)) {
+  id eui=attr(app,@"AXEnhancedUserInterface");
+  BOOL wasOn=[eui isKindOfClass:NSNumber.class] && [eui boolValue];
+  if(wasOn) axSetEnhancedUI(app,NO);
+  @try { work(); }
+  @finally { if(wasOn) axSetEnhancedUI(app,YES); }
+}
 static NSDictionary *geometry(id v, BOOL size) {
   if (!v || CFGetTypeID((__bridge CFTypeRef)v) != AXValueGetTypeID()) return nil;
   if (size) { CGSize s; if (AXValueGetValue((__bridge AXValueRef)v,kAXValueCGSizeType,&s)) return @{ @"w":@(s.width), @"h":@(s.height) }; }
@@ -1106,6 +1134,18 @@ static id execute(NSDictionary *p) {
     if([args[@"cancelled"] boolValue]) cuCancelled=1;
     return @{@"yield_ms":@(cuYieldToUser(args))};
   }
+  if([tool isEqual:@"inspect_enhanced_ui_frame"]) {
+    NSMutableDictionary *app=[@{@"writes":[NSMutableArray array]} mutableCopy];
+    if(args[@"enhanced"]) app[@"AXEnhancedUserInterface"]=args[@"enhanced"];
+    NSString *error=nil;
+    @try {
+      cuWithoutEnhancedUI((__bridge AXUIElementRef)app,^{
+        [app[@"writes"] addObject:[NSString stringWithFormat:@"geometry(AXEnhancedUserInterface=%d)",[app[@"AXEnhancedUserInterface"] boolValue]]];
+        if([args[@"throw"] boolValue]) @throw [NSException exceptionWithName:@"window" reason:@"refused" userInfo:nil];
+      });
+    } @catch(NSException *e) { error=e.reason; }
+    return @{@"writes":app[@"writes"],@"enhanced":app[@"AXEnhancedUserInterface"]?:NSNull.null,@"error":error?:NSNull.null};
+  }
   if([tool isEqual:@"inspect_click_action"]) return @{@"action":cuClickAction((__bridge AXUIElementRef)args[@"element"],[args[@"context"] boolValue])?:NSNull.null};
   if([tool isEqual:@"inspect_element_identity"]) {
     cuValidateElementIdentity((__bridge AXUIElementRef)args[@"element"],args[@"target"]);
@@ -1318,31 +1358,35 @@ static id execute(NSDictionary *p) {
     CGRect before=CGRectNull; cuFrame(win,&before);
     cuCheckCancelled();
     CGPoint p=CGPointMake(fx,fy); CGSize z=CGSizeMake(fw,fh);
-    AXValueRef pos=AXValueCreate(kAXValueCGPointType,&p), size=AXValueCreate(kAXValueCGSizeType,&z);
-    AXError pe=AXUIElementSetAttributeValue(win,(__bridge CFStringRef)@"AXPosition",pos);
-    AXError se=AXUIElementSetAttributeValue(win,(__bridge CFStringRef)@"AXSize",size);
-    // Some apps re-anchor a window's origin when its size changes; re-assert
-    // the position once after the size has had a run-loop turn to settle.
-    if(pe==kAXErrorSuccess) {
-      [NSRunLoop.currentRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.05]];
-      AXError pe2=AXUIElementSetAttributeValue(win,(__bridge CFStringRef)@"AXPosition",pos);
-      if(pe2!=kAXErrorSuccess) pe=pe2;
-    }
-    if(pos) CFRelease(pos); if(size) CFRelease(size);
-    if(pe!=kAXErrorSuccess && se!=kAXErrorSuccess) {
-      CFRelease(app);
-      @throw [NSException exceptionWithName:@"window" reason:@"the app refused the window frame change (it may be fullscreen, tiled or non-resizable)" userInfo:nil];
-    }
-    // Apps apply frame changes over a few run-loop turns; verify by reading the
-    // window's own geometry back, not by trusting the set call.
-    CGRect after=before;
-    for(int i=0;i<40;i++) {
-      cuCheckCancelled();
-      [NSRunLoop.currentRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.05]];
-      cuFrame(win,&after);
-      if(fabs(after.origin.x-fx)<1 && fabs(after.origin.y-fy)<1 && fabs(after.size.width-fw)<1 && fabs(after.size.height-fh)<1) break;
-    }
-    CFRelease(app);
+    __block AXError pe=kAXErrorFailure, se=kAXErrorFailure;
+    __block CGRect after=before;
+    @try {
+      cuWithoutEnhancedUI(app,^{
+        AXValueRef pos=AXValueCreate(kAXValueCGPointType,&p), size=AXValueCreate(kAXValueCGSizeType,&z);
+        pe=AXUIElementSetAttributeValue(win,(__bridge CFStringRef)@"AXPosition",pos);
+        se=AXUIElementSetAttributeValue(win,(__bridge CFStringRef)@"AXSize",size);
+        // Some apps re-anchor a window's origin when its size changes; re-assert
+        // the position once after the size has had a run-loop turn to settle.
+        if(pe==kAXErrorSuccess) {
+          [NSRunLoop.currentRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.05]];
+          AXError pe2=AXUIElementSetAttributeValue(win,(__bridge CFStringRef)@"AXPosition",pos);
+          if(pe2!=kAXErrorSuccess) pe=pe2;
+        }
+        if(pos) CFRelease(pos); if(size) CFRelease(size);
+        if(pe!=kAXErrorSuccess && se!=kAXErrorSuccess)
+          @throw [NSException exceptionWithName:@"window" reason:@"the app refused the window frame change (it may be fullscreen, tiled or non-resizable)" userInfo:nil];
+        // Apps apply frame changes over a few run-loop turns; verify by reading the
+        // window's own geometry back, not by trusting the set call. The readback
+        // stays inside the enhanced-UI-off window so no animation is in flight
+        // when the attribute is restored.
+        for(int i=0;i<40;i++) {
+          cuCheckCancelled();
+          [NSRunLoop.currentRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.05]];
+          cuFrame(win,&after);
+          if(fabs(after.origin.x-fx)<1 && fabs(after.origin.y-fy)<1 && fabs(after.size.width-fw)<1 && fabs(after.size.height-fh)<1) break;
+        }
+      });
+    } @finally { CFRelease(app); }
     BOOL verified = fabs(after.origin.x-fx)<1 && fabs(after.origin.y-fy)<1 && fabs(after.size.width-fw)<1 && fabs(after.size.height-fh)<1;
     NSMutableDictionary *done=[@{@"action_sent":@YES,@"window_id":@(idx),
              @"before":@{@"x":@(before.origin.x),@"y":@(before.origin.y),@"w":@(before.size.width),@"h":@(before.size.height)},
