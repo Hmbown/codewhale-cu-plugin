@@ -1123,15 +1123,20 @@ test('set_window_frame clears AXEnhancedUserInterface around geometry writes and
   const build=spawnSync('clang',['-DCU_TEST=1',...NATIVE_FLAGS,'-o',binary],{encoding:'utf8'});
   assert.equal(build.status,0,build.stderr);
   const run=args=>{const r=spawnSync(binary,[JSON.stringify({tool:'inspect_enhanced_ui_frame',args})],{encoding:'utf8'});assert.equal(r.status,0,r.stderr);return JSON.parse(r.stdout);};
-  const cleared=['AXEnhancedUserInterface=0','geometry(AXEnhancedUserInterface=0)','AXEnhancedUserInterface=1'];
+  // The fake window logs each geometry write with the app's enhanced-UI state
+  // at that moment; this is the same write path set_window_frame takes.
+  const geometry=eui=>[`AXPosition(AXEnhancedUserInterface=${eui})`,`AXSize(AXEnhancedUserInterface=${eui})`,`AXPosition(AXEnhancedUserInterface=${eui})`];
+  const cleared=['AXEnhancedUserInterface=0',...geometry(0),'AXEnhancedUserInterface=1'];
   let r=run({enhanced:true});
   assert.deepEqual(r.writes,cleared,'geometry is written with enhanced UI off');
   assert.equal(r.enhanced,true,'enhanced UI is restored for content observation');
-  r=run({enhanced:true,throw:true});
-  assert.equal(r.error,'refused');
-  assert.deepEqual(r.writes,cleared,'a refused frame still restores enhanced UI');
-  assert.deepEqual(run({}).writes,['geometry(AXEnhancedUserInterface=0)'],'apps without the attribute are not touched');
-  assert.deepEqual(run({enhanced:false}).writes,['geometry(AXEnhancedUserInterface=0)'],'an app with it off is left off');
+  assert.deepEqual(r.after,{x:200,y:120,w:1600,h:900},'the readback reports the applied frame');
+  r=run({enhanced:true,refuse:true});
+  assert.match(r.error,/refused the window frame change/);
+  assert.deepEqual(r.writes,['AXEnhancedUserInterface=0','AXPosition(AXEnhancedUserInterface=0)','AXSize(AXEnhancedUserInterface=0)','AXEnhancedUserInterface=1'],'a refused frame still restores enhanced UI');
+  assert.equal(r.enhanced,true);
+  assert.deepEqual(run({}).writes,geometry(0),'apps without the attribute are not touched');
+  assert.deepEqual(run({enhanced:false}).writes,geometry(0),'an app with it off is left off');
 });
 
 // Live proof against a real NSWindow. Needs Accessibility trust for the test
@@ -1152,6 +1157,6 @@ int main(void){ @autoreleasepool { NSApplication *a=NSApplication.sharedApplicat
     const r=spawnSync(binary,[JSON.stringify({tool:'set_window_frame',args:{app_ref:{pid:child.pid},window_id:0,frame}})],{encoding:'utf8'});
     assert.equal(r.status,0,r.stderr);
     const {after}=JSON.parse(r.stdout);
-    assert.deepEqual({w:after.w,h:after.h},{w:frame.w,h:frame.h},`frame ${JSON.stringify(frame)} -> ${JSON.stringify(after)}`);
+    assert.deepEqual(after,frame,`frame ${JSON.stringify(frame)} -> ${JSON.stringify(after)}`);
   }
 });
