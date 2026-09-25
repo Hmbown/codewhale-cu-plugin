@@ -1,5 +1,21 @@
 # Release notes
 
+## Unreleased
+
+### A visible Codewhale cursor (macOS)
+
+- Every action that targets a point glides an on-screen Codewhale pointer
+  there before the action lands: the cyan arrow from the app icon with a whale
+  badge, plus a ring on clicks. The app draws it in a click-through,
+  screen-saver-level window that screen capture excludes. The user's hardware
+  cursor still never moves.
+- The helper's window-occlusion check ignores that cursor window, so it never
+  blocks the point it marks.
+- `CODEWHALE_CU_AGENT_CURSOR=0` disables it;
+  `CODEWHALE_CU_AGENT_CURSOR_GLIDE_MS` (default 180) sets the glide. The
+  cursor hides when the session closes and fades after 8 s idle.
+- The preview panel draws the same Codewhale pointer.
+
 ## 0.12.0 — the agent gets its own pointer
 
 The agent no longer uses the person's cursor on macOS; the shared-computer

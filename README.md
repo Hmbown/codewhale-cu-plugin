@@ -280,7 +280,7 @@ background mode. There is no automatic foreground fallback.
 When the user authorizes exclusive desktop use, select `activate: true` for
 foreground control. Raw clicks, hover, drag and wheel then go to the bound
 app's window as window-routed event records (`strategy: "window-record"`,
-`pointer_moved: false`) — the agent has its own pointer, drawn in the preview,
+`pointer_moved: false`) — the agent has its own pointer, drawn on screen,
 and **the user's cursor is never moved, warped or held on macOS**. There is no
 real-cursor fallback: a helper that cannot resolve the window route refuses
 `bg_dispatch_unavailable`. `pointer` down/move/up buffer a drag and deliver it
@@ -304,6 +304,17 @@ default 1000; 0 disables), so it behaves like a live view of the app instead of
 a frozen still; its cursor is separate from the hardware pointer. Close the
 panel or use `enabled: false` to hide it — and the session that showed the
 panel hides it when it closes, so no panel outlives its session.
+
+**The Codewhale cursor.** On macOS, every action that targets a point
+(click, hover, drag, scroll, element press, focus, set value) first glides a
+Codewhale pointer to that point: the cyan arrow from the app icon, with a small
+whale badge. A click shows a short ring. The app draws this cursor in a
+click-through, always-on-top window, so it never takes focus or receives your
+clicks. Screen capture excludes it, so the agent's screenshots show the app,
+not its own cursor. The action waits for the glide
+(`CODEWHALE_CU_AGENT_CURSOR_GLIDE_MS`, default 180, max 600). The cursor fades
+after 8 s idle and hides when the session closes. `CODEWHALE_CU_AGENT_CURSOR=0`
+turns the cursor and the glide off. Your own cursor stays where you left it.
 
 ### Consent and shared-machine manners on the local computer
 
