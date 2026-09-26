@@ -187,6 +187,16 @@ export function leaseAccounting(r) {
   return out;
 }
 
+// Tools that act at a point and so move the agent's drawn cursor there.
+const AGENT_CURSOR_TOOLS = new Set(["bg_pointer", "hit_test", "click_element", "perform_action", "scroll_element", "focus_element", "set_value", "select_text", "type"]);
+const AGENT_CURSOR_GLIDE_MS = Math.min(600, Math.max(0, Number(process.env.CODEWHALE_CU_AGENT_CURSOR_GLIDE_MS ?? 180) || 0));
+const MOUSE_DOWN_TYPES = new Set(Object.values(MOUSE).map((m) => m.down));
+function agentCursorClick(tool, args) {
+  if (tool === "bg_pointer") return (args.steps ?? []).some((s) => MOUSE_DOWN_TYPES.has(s?.type));
+  if (tool === "hit_test") return !args.direction;
+  return tool === "click_element" || tool === "perform_action";
+}
+
 export function create({ exec }) {
   const runL = (cmd, args, opts) => exec.run(cmd, args, opts);
   // The preview panel is on by default: while a session is bound to an app,
@@ -197,7 +207,8 @@ export function create({ exec }) {
   // successful capture a timer keeps refreshing it, so the person watches the
   // app instead of a frozen still. CODEWHALE_CU_PREVIEW_REFRESH_MS=0 disables
   // the loop (tests, headless); the floor keeps a hostile value tolerable.
-  const state = { activeDisplay: 1, lastRaster: null, inputApp: null, foregroundInput: false, previewEnabled: true, pointer: null, heldDrag: null };
+  const state = { activeDisplay: 1, lastRaster: null, inputApp: null, foregroundInput: false, previewEnabled: true, pointer: null, heldDrag: null,
+                  agentCursor: process.env.CODEWHALE_CU_AGENT_CURSOR !== "0" };
   // Shared-surface politeness: front leases, real-pointer gestures,
   // foreground keys and activations wait for a gap in the user's hardware
   // input rather than interleave with their typing. The helper reads the
@@ -272,13 +283,20 @@ export function create({ exec }) {
       throw Object.assign(new ExecError("Update the Computer Use helper before background typing; this helper may borrow keyboard focus."), { code: "app_upgrade_required" });
     }
     const t = args?.target;
-    if (t && Number.isFinite(t.x) && Number.isFinite(t.y)) state.pointer = { x: t.x, y: t.y };
+    let point = null;
+    if (t && Number.isFinite(t.x) && Number.isFinite(t.y)) point = { x: t.x, y: t.y };
+    if (tool === "hit_test" && args.perform && Number.isFinite(args.x) && Number.isFinite(args.y)) point = { x: args.x, y: args.y };
     if (tool === "bg_pointer") {
       const last = [...(args.steps ?? [])].reverse().find((s) => Number.isFinite(s?.x) && Number.isFinite(s?.y));
-      if (last) state.pointer = { x: last.x, y: last.y };
+      if (last) point = { x: last.x, y: last.y };
     }
+    if (point) state.pointer = point;
+    // The agent's own on-screen cursor glides to every acting point; the
+    // helper posts it to the app and waits out the glide before the input.
+    const agentPointer = point && state.agentCursor && AGENT_CURSOR_TOOLS.has(tool) && (tool !== "hit_test" || args.perform)
+      ? { ...point, click: agentCursorClick(tool, args), glide_ms: AGENT_CURSOR_GLIDE_MS } : undefined;
     const helper = await nativeHelper();
-    const r = await runL(helper, [JSON.stringify({ tool, args: { ...args, ...yieldArgs, input_app_ref: state.inputApp, foreground_input: state.foregroundInput, owner_pipe: true } })], { timeoutMs: 20_000, ownerPipe: true });
+    const r = await runL(helper, [JSON.stringify({ tool, args: { ...args, ...yieldArgs, ...(agentPointer ? { agent_pointer: agentPointer } : {}), input_app_ref: state.inputApp, foreground_input: state.foregroundInput, owner_pipe: true } })], { timeoutMs: 20_000, ownerPipe: true });
     if (r.aborted || r.timedOut || r.code !== 0) {
       const error = new ExecError(r.aborted ? "computer request cancelled" : r.timedOut ? "native accessibility helper timed out" : r.stderr.trim() || "native accessibility helper failed", r);
       if (r.aborted) error.code = "cancelled";
@@ -657,6 +675,9 @@ export function create({ exec }) {
       try { await native("preview_notify", { enabled: false }); } catch { /* hiding is best-effort */ }
     }
     state.previewEnabled = false;
+    if (state.agentCursor && state.pointer) {
+      try { await native("agent_cursor", { hide: true }); } catch { /* the app fades an idle cursor anyway */ }
+    }
     await browser.close().catch(() => {});
     const owned = [...rec.entries()];
     for (const [, recording] of owned) requestRecordingStop(recording);
