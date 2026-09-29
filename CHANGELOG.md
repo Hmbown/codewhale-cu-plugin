@@ -7,6 +7,7 @@
 - Clarify bundled-helper setup and the local-app, signed-in-Chrome and isolated-browser routes.
 
 Host guidance delivery is owned by Engine separately. No app or store publication is claimed.
+Local source checks: 389 passed / 18 skipped; focused MCP resource suite: 11 passed.
 
 ## 0.12.0 — the agent gets its own pointer
 
