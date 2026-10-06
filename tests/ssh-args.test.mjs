@@ -27,7 +27,6 @@ test("ssh destinations follow the shared vectors", () => {
   for (const entry of vectors.invalid) assert.throws(() => validateSshTarget(entry), JSON.stringify(entry));
 });
 
-
 test("known-hosts paths use the native filesystem and cannot expand into config tokens", () => {
   const file = path.resolve("trusted-hosts");
   const argv = sshArgv({ host: "fixture.test", knownHosts: file });
