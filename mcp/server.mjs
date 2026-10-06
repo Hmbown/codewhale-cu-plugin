@@ -973,7 +973,8 @@ async function callTool(params) {
   if (name === "computer_register") {
     try {
       assertNotOwnedElsewhere(args.computer);
-      const entry = registry.register({ id: args.computer, transport: args.transport, label: args.label, host: args.host, port: args.port, user: args.user, knownHosts: args.knownHosts, target: args.target });      await bindComputer(entry);
+      const entry = registry.register({ id: args.computer, transport: args.transport, label: args.label, host: args.host, port: args.port, user: args.user, knownHosts: args.knownHosts, target: args.target });
+      await bindComputer(entry);
       let installed = null;
       if (entry.transport === "ssh" && args.installAgent !== false) {
         installed = await installRemoteAgent(entry);
