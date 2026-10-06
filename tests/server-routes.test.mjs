@@ -537,8 +537,8 @@ test("SSH registration retains its trusted host-key file after platform discover
   assert.equal(JSON.parse(fs.readFileSync(path.join(f.dir, "computers.json"))).computers.pad.knownHosts, knownHosts);
   const calls = f.calls();
   assert.equal(calls.length, 1);
-  assert.ok(calls[0].args.includes(`UserKnownHostsFile=${knownHosts}`));
-  assert.ok(calls[0].args.includes("GlobalKnownHostsFile=/dev/null"));
+  assert.ok(calls[0].args.includes(`UserKnownHostsFile=${process.platform === "win32" ? knownHosts.replaceAll("\\", "/") : knownHosts}`));
+  assert.ok(calls[0].args.includes(`GlobalKnownHostsFile=${process.platform === "win32" ? "NUL" : "/dev/null"}`));
   assert.ok(calls[0].args.includes("StrictHostKeyChecking=yes"));
 });
 
